@@ -1,0 +1,70 @@
+name: Tauri Multi-OS Build with Version
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # 1. リポジトリチェックアウト
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 2. Node.js セットアップ
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      # 3. Rust セットアップ
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      # 4. npm 依存関係インストール
+      - name: Install dependencies
+        run: npm install
+
+      # 5. バージョン番号取得
+      - name: Get version from package.json
+        id: get_version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      # 6. Tauri ビルド
+      - name: Build Tauri App
+        run: npm run tauri build
+        env:
+          CI: true
+
+      # 7. 成果物のリネーム & OS付け
+      - name: Rename build files with version and OS
+        run: |
+          BUILD_DIR="src-tauri/target/release/bundle"
+          OS="${{ matrix.os }}"
+          VERSION="${{ env.VERSION }}"
+          if [[ "$OS" == "windows-latest" ]]; then
+            mv "$BUILD_DIR/wix/tauri-video-downloader.exe" "$BUILD_DIR/tauri-video-downloader-${VERSION}-Windows.exe"
+          elif [[ "$OS" == "macos-latest" ]]; then
+            mv "$BUILD_DIR/dmg/tauri-video-downloader.app" "$BUILD_DIR/tauri-video-downloader-${VERSION}-Mac.app"
+          elif [[ "$OS" == "ubuntu-latest" ]]; then
+            mv "$BUILD_DIR/deb/tauri-video-downloader.deb" "$BUILD_DIR/tauri-video-downloader-${VERSION}-Linux.deb"
+          fi
+
+      # 8. ビルド成果物をアーティファクトとしてアップロード
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: tauri-build-${{ matrix.os }}-v${{ env.VERSION }}
+          path: src-tauri/target/release/bundle/*
