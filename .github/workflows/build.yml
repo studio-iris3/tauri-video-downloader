@@ -1,70 +1,80 @@
 name: Tauri Multi-OS Build with Version
 
+# 実行トリガー
 on:
   push:
-    branches: [main]
+    branches: [main]      # main に push したとき
   pull_request:
-    branches: [main]
+    branches: [main]      # PR が main に作られたとき
 
 jobs:
   build:
+    # 並列で Mac / Windows / Linux をビルド
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
-      # 1. リポジトリチェックアウト
+      # 1️⃣ GitHub リポジトリをチェックアウト
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2. Node.js セットアップ
+      # 2️⃣ Node.js のセットアップ
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20
 
-      # 3. Rust セットアップ
+      # 3️⃣ Rust のセットアップ
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           override: true
 
-      # 4. npm 依存関係インストール
+      # 4️⃣ npm 依存関係をインストール
       - name: Install dependencies
         run: npm install
 
-      # 5. バージョン番号取得
+      # 5️⃣ package.json からバージョン番号を取得
       - name: Get version from package.json
         id: get_version
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
-      # 6. Tauri ビルド
+      # 6️⃣ Tauri ビルド
       - name: Build Tauri App
         run: npm run tauri build
         env:
-          CI: true
+          CI: true  # Tauri CIモード
 
-      # 7. 成果物のリネーム & OS付け
+      # 7️⃣ OSごとにビルド成果物をリネーム（バージョンとOSを付与）
       - name: Rename build files with version and OS
         run: |
           BUILD_DIR="src-tauri/target/release/bundle"
           OS="${{ matrix.os }}"
           VERSION="${{ env.VERSION }}"
+
           if [[ "$OS" == "windows-latest" ]]; then
-            mv "$BUILD_DIR/wix/tauri-video-downloader.exe" "$BUILD_DIR/tauri-video-downloader-${VERSION}-Windows.exe"
+            if [ -f "$BUILD_DIR/wix/tauri-video-downloader.exe" ]; then
+              mv "$BUILD_DIR/wix/tauri-video-downloader.exe" "$BUILD_DIR/tauri-video-downloader-${VERSION}-Windows.exe"
+            fi
           elif [[ "$OS" == "macos-latest" ]]; then
-            mv "$BUILD_DIR/dmg/tauri-video-downloader.app" "$BUILD_DIR/tauri-video-downloader-${VERSION}-Mac.app"
+            if [ -f "$BUILD_DIR/dmg/tauri-video-downloader.app" ]; then
+              mv "$BUILD_DIR/dmg/tauri-video-downloader.app" "$BUILD_DIR/tauri-video-downloader-${VERSION}-Mac.app"
+            fi
           elif [[ "$OS" == "ubuntu-latest" ]]; then
-            mv "$BUILD_DIR/deb/tauri-video-downloader.deb" "$BUILD_DIR/tauri-video-downloader-${VERSION}-Linux.deb"
+            if [ -f "$BUILD_DIR/deb/tauri-video-downloader.deb" ]; then
+              mv "$BUILD_DIR/deb/tauri-video-downloader.deb" "$BUILD_DIR/tauri-video-downloader-${VERSION}-Linux.deb"
+            fi
           fi
 
-      # 8. ビルド成果物をアーティファクトとしてアップロード
+      # 8️⃣ ビルド成果物を GitHub にアップロード（v4, 失敗しても他OS影響なし）
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: tauri-build-${{ matrix.os }}-v${{ env.VERSION }}
           path: src-tauri/target/release/bundle/*
