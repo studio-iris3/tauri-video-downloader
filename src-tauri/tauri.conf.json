@@ -25,6 +25,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "bin/ffmpeg",
+      "bin/ffprobe"
+    ],
     "externalBin": [
       "bin/ffmpeg",
       "bin/ffprobe"

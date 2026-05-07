@@ -51,25 +51,38 @@ fn ffmpeg_location(app: &AppHandle) -> Result<String, String> {
     }
 
     #[cfg(target_os = "macos")]
-    let ffmpeg_name = if cfg!(target_arch = "aarch64") {
-        "ffmpeg-aarch64-apple-darwin"
-    } else {
-        "ffmpeg-x86_64-apple-darwin"
-    };
+    {
+        let path = app
+            .path()
+            .resource_dir()
+            .map_err(|e| e.to_string())?
+            .join("bin")
+            .join("ffmpeg");
+
+        return Ok(path.to_string_lossy().to_string());
+    }
 
     #[cfg(target_os = "windows")]
-    let ffmpeg_name = "ffmpeg-x86_64-pc-windows-msvc.exe";
+    {
+        let path = app
+            .path()
+            .resource_dir()
+            .map_err(|e| e.to_string())?
+            .join("ffmpeg-x86_64-pc-windows-msvc.exe");
+
+        return Ok(path.to_string_lossy().to_string());
+    }
 
     #[cfg(target_os = "linux")]
-    let ffmpeg_name = "ffmpeg-x86_64-unknown-linux-gnu";
+    {
+        let path = app
+            .path()
+            .resource_dir()
+            .map_err(|e| e.to_string())?
+            .join("ffmpeg-x86_64-unknown-linux-gnu");
 
-    let path = app
-        .path()
-        .resource_dir()
-        .map_err(|e| e.to_string())?
-        .join(ffmpeg_name);
-
-    Ok(path.to_string_lossy().to_string())
+        return Ok(path.to_string_lossy().to_string());
+    }
 }
 
 fn resolve_save_path(save_path: String) -> Result<PathBuf, String> {
