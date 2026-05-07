@@ -2,10 +2,9 @@ name: Build Tauri App
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
+    branches:
+      - main
+      - tauri-v2-current
 
 jobs:
   build:
