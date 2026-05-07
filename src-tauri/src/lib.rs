@@ -4,11 +4,12 @@ use std::{
     path::PathBuf,
     process::{Command, Stdio},
     sync::Mutex,
+    thread,
     time::{Duration, Instant},
 };
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 struct JobState {
     pids: Mutex<HashMap<String, u32>>,
@@ -41,6 +42,34 @@ fn yt_dlp_path() -> String {
     {
         "yt-dlp".to_string()
     }
+}
+
+fn ffmpeg_location(app: &AppHandle) -> Result<String, String> {
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    {
+        return Ok("/usr/local/bin/ffmpeg".to_string());
+    }
+
+    #[cfg(target_os = "macos")]
+    let ffmpeg_name = if cfg!(target_arch = "aarch64") {
+        "ffmpeg-aarch64-apple-darwin"
+    } else {
+        "ffmpeg-x86_64-apple-darwin"
+    };
+
+    #[cfg(target_os = "windows")]
+    let ffmpeg_name = "ffmpeg-x86_64-pc-windows-msvc.exe";
+
+    #[cfg(target_os = "linux")]
+    let ffmpeg_name = "ffmpeg-x86_64-unknown-linux-gnu";
+
+    let path = app
+        .path()
+        .resource_dir()
+        .map_err(|e| e.to_string())?
+        .join(ffmpeg_name);
+
+    Ok(path.to_string_lossy().to_string())
 }
 
 fn resolve_save_path(save_path: String) -> Result<PathBuf, String> {
@@ -165,14 +194,15 @@ fn download_video(
 
     let mut command = Command::new(yt_dlp_path());
 
-    command.arg(&url);
+    let ffmpeg_path = ffmpeg_location(&app)?;
 
+    command.args(["--ffmpeg-location", &ffmpeg_path]);
     command.args(["--extractor-args", "youtube:player_client=default,ios"]);
     command.arg("--force-ipv4");
-
     command.args(["-o", &output_template]);
     command.arg("--newline");
     command.arg("--no-playlist");
+    command.arg("--prefer-ffmpeg");
 
     add_cookie_args(&mut command, &cookie_browser);
 
@@ -190,25 +220,32 @@ fn download_video(
         let _ = app.emit(
             "download-log",
             format!(
-                "[{}] MP3で保存します / 保存先: {} / 音質: {}",
-                job_id, save_dir_text, mp3_quality
+                "[{}] MP3で保存します / 保存先: {} / 音質: {} / ffmpeg: {}",
+                job_id, save_dir_text, mp3_quality, ffmpeg_path
             ),
         );
     } else {
         let format_selector = match mp4_quality.as_str() {
-            "1080" => "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
-            "720" => "bestvideo[height<=720]+bestaudio/best[height<=720]",
-            "480" => "bestvideo[height<=480]+bestaudio/best[height<=480]",
-            _ => "bestvideo+bestaudio/best",
+            "1080" => "bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[ext=mp4][height<=1080]",
+            "720" => "bv*[ext=mp4][height<=720]+ba[ext=m4a]/b[ext=mp4][height<=720]",
+            "480" => "bv*[ext=mp4][height<=480]+ba[ext=m4a]/b[ext=mp4][height<=480]",
+            _ => "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
         };
 
-        command.args(["-f", format_selector, "--merge-output-format", "mp4"]);
+        command.args([
+            "-f",
+            format_selector,
+            "--merge-output-format",
+            "mp4",
+            "--remux-video",
+            "mp4",
+        ]);
 
         let _ = app.emit(
             "download-log",
             format!(
-                "[{}] MP4で保存します / 保存先: {} / 画質: {}",
-                job_id, save_dir_text, quality_label
+                "[{}] MP4で保存します / 保存先: {} / 画質: {} / ffmpeg: {}",
+                job_id, save_dir_text, quality_label, ffmpeg_path
             ),
         );
     }
@@ -219,6 +256,8 @@ fn download_video(
             format!("[{}] Cookie取得元: {}", job_id, cookie_browser),
         );
     }
+
+    command.arg(&url);
 
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -237,6 +276,26 @@ fn download_video(
 
         pids.insert(job_id.clone(), pid);
     }
+
+    let app_for_stderr = app.clone();
+    let job_id_for_stderr = job_id.clone();
+
+    let stderr_handle = child.stderr.take().map(|stderr| {
+        thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+
+            for line in reader.lines() {
+                let line = line.unwrap_or_default();
+
+                if !line.trim().is_empty() {
+                    let _ = app_for_stderr.emit(
+                        "download-log",
+                        format!("[{}] {}", job_id_for_stderr, line),
+                    );
+                }
+            }
+        })
+    });
 
     let mut last_emit = Instant::now() - Duration::from_secs(1);
     let mut last_percent = -1.0;
@@ -266,15 +325,19 @@ fn download_video(
                 }
             }
 
-            if line.contains("[download]") {
+            if !line.trim().is_empty() {
                 let _ = app.emit("download-log", format!("[{}] {}", job_id, line));
             }
         }
     }
 
-    let output = child
-        .wait_with_output()
+    let status = child
+        .wait()
         .map_err(|e| format!("yt-dlp の終了待機に失敗しました: {}", e))?;
+
+    if let Some(handle) = stderr_handle {
+        let _ = handle.join();
+    }
 
     {
         let mut pids = state
@@ -285,7 +348,7 @@ fn download_video(
         pids.remove(&job_id);
     }
 
-    if output.status.success() {
+    if status.success() {
         let _ = app.emit(
             "download-progress",
             DownloadProgressPayload {
@@ -298,13 +361,7 @@ fn download_video(
 
         Ok(format!("ダウンロード完了: {}", save_dir_text))
     } else {
-        let error_text = String::from_utf8_lossy(&output.stderr).to_string();
-
-        if error_text.trim().is_empty() {
-            Err("ダウンロードに失敗しました".to_string())
-        } else {
-            Err(error_text)
-        }
+        Err("ダウンロードまたは結合に失敗しました。ログを確認してください。".to_string())
     }
 }
 
