@@ -27,20 +27,37 @@ struct DownloadProgressPayload {
     percent: f64,
 }
 
-fn yt_dlp_path() -> String {
+fn yt_dlp_path(app: &AppHandle) -> Result<String, String> {
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    {
+        return Ok("/usr/local/bin/yt-dlp".to_string());
+    }
+
     #[cfg(target_os = "macos")]
     {
-        "/usr/local/bin/yt-dlp".to_string()
+        let path = app
+            .path()
+            .resource_dir()
+            .map_err(|e| e.to_string())?
+            .join("yt-dlp-universal-apple-darwin");
+
+        return Ok(path.to_string_lossy().to_string());
     }
 
     #[cfg(target_os = "windows")]
     {
-        "yt-dlp.exe".to_string()
+        let path = app
+            .path()
+            .resource_dir()
+            .map_err(|e| e.to_string())?
+            .join("yt-dlp-x86_64-pc-windows-msvc.exe");
+
+        return Ok(path.to_string_lossy().to_string());
     }
 
     #[cfg(target_os = "linux")]
     {
-        "yt-dlp".to_string()
+        return Ok("yt-dlp".to_string());
     }
 }
 
@@ -109,8 +126,13 @@ fn get_default_download_dir() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn get_video_info(url: String, cookie_browser: String) -> Result<VideoInfo, String> {
-    let mut command = Command::new(yt_dlp_path());
+fn get_video_info(
+    app: AppHandle,
+    url: String,
+    cookie_browser: String,
+) -> Result<VideoInfo, String> {
+    let yt_dlp = yt_dlp_path(&app)?;
+    let mut command = Command::new(yt_dlp);
 
     command.args(["--dump-json", "--no-playlist"]);
     command.args(["--extractor-args", "youtube:player_client=default,ios"]);
@@ -205,9 +227,10 @@ fn download_video(
 
     let output_template = format!("{}/%(title)s_{}.%(ext)s", save_dir_text, quality_label);
 
-    let mut command = Command::new(yt_dlp_path());
-
+    let yt_dlp = yt_dlp_path(&app)?;
     let ffmpeg_path = ffmpeg_location(&app)?;
+
+    let mut command = Command::new(yt_dlp);
 
     command.args(["--ffmpeg-location", &ffmpeg_path]);
     command.args(["--extractor-args", "youtube:player_client=default,ios"]);
@@ -233,8 +256,12 @@ fn download_video(
         let _ = app.emit(
             "download-log",
             format!(
-                "[{}] MP3で保存します / 保存先: {} / 音質: {} / ffmpeg: {}",
-                job_id, save_dir_text, mp3_quality, ffmpeg_path
+                "[{}] MP3で保存します / 保存先: {} / 音質: {} / yt-dlp: {} / ffmpeg: {}",
+                job_id,
+                save_dir_text,
+                mp3_quality,
+                yt_dlp_path(&app).unwrap_or_default(),
+                ffmpeg_path
             ),
         );
     } else {
@@ -257,8 +284,12 @@ fn download_video(
         let _ = app.emit(
             "download-log",
             format!(
-                "[{}] MP4で保存します / 保存先: {} / 画質: {} / ffmpeg: {}",
-                job_id, save_dir_text, quality_label, ffmpeg_path
+                "[{}] MP4で保存します / 保存先: {} / 画質: {} / yt-dlp: {} / ffmpeg: {}",
+                job_id,
+                save_dir_text,
+                quality_label,
+                yt_dlp_path(&app).unwrap_or_default(),
+                ffmpeg_path
             ),
         );
     }
@@ -400,9 +431,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_default_download_dir,
-            get_video_info,
             download_video,
-            cancel_download
+            cancel_download,
+            get_video_info
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

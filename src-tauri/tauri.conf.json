@@ -31,7 +31,8 @@
     ],
     "externalBin": [
       "bin/ffmpeg",
-      "bin/ffprobe"
+      "bin/ffprobe",
+      "bin/yt-dlp"
     ],
     "icon": [
       "icons/32x32.png",
