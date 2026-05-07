@@ -27,7 +27,11 @@
     "targets": "all",
     "resources": [
       "bin/ffmpeg",
-      "bin/ffprobe"
+      "bin/ffprobe",
+      "bin/yt-dlp-universal-apple-darwin",
+      "bin/yt-dlp-x86_64-apple-darwin",
+      "bin/yt-dlp-aarch64-apple-darwin",
+      "bin/yt-dlp-x86_64-pc-windows-msvc.exe"
     ],
     "externalBin": [
       "bin/ffmpeg",

@@ -30,34 +30,68 @@ struct DownloadProgressPayload {
 fn yt_dlp_path(app: &AppHandle) -> Result<String, String> {
     #[cfg(all(target_os = "macos", debug_assertions))]
     {
-        return Ok("/usr/local/bin/yt-dlp".to_string());
+        let candidates = ["/usr/local/bin/yt-dlp", "/opt/homebrew/bin/yt-dlp", "yt-dlp"];
+
+        for candidate in candidates {
+            let path = PathBuf::from(candidate);
+
+            if path.exists() || candidate == "yt-dlp" {
+                return Ok(candidate.to_string());
+            }
+        }
     }
+
+    let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
 
     #[cfg(target_os = "macos")]
     {
-        let path = app
-            .path()
-            .resource_dir()
-            .map_err(|e| e.to_string())?
-            .join("yt-dlp-universal-apple-darwin");
+        let candidates = [
+            resource_dir.join("bin").join("yt-dlp"),
+            resource_dir.join("bin").join("yt-dlp-universal-apple-darwin"),
+            resource_dir.join("bin").join("yt-dlp-x86_64-apple-darwin"),
+            resource_dir.join("bin").join("yt-dlp-aarch64-apple-darwin"),
+            resource_dir.join("yt-dlp-universal-apple-darwin"),
+            resource_dir.join("yt-dlp-x86_64-apple-darwin"),
+            resource_dir.join("yt-dlp-aarch64-apple-darwin"),
+        ];
 
-        return Ok(path.to_string_lossy().to_string());
+        for path in candidates {
+            if path.exists() {
+                return Ok(path.to_string_lossy().to_string());
+            }
+        }
+
+        return Err(format!(
+            "同梱 yt-dlp が見つかりません。resource_dir: {}",
+            resource_dir.to_string_lossy()
+        ));
     }
 
     #[cfg(target_os = "windows")]
     {
-        let path = app
-            .path()
-            .resource_dir()
-            .map_err(|e| e.to_string())?
-            .join("yt-dlp-x86_64-pc-windows-msvc.exe");
+        let candidates = [
+            resource_dir
+                .join("bin")
+                .join("yt-dlp-x86_64-pc-windows-msvc.exe"),
+            resource_dir.join("yt-dlp-x86_64-pc-windows-msvc.exe"),
+            resource_dir.join("yt-dlp.exe"),
+        ];
 
-        return Ok(path.to_string_lossy().to_string());
+        for path in candidates {
+            if path.exists() {
+                return Ok(path.to_string_lossy().to_string());
+            }
+        }
+
+        return Err(format!(
+            "同梱 yt-dlp.exe が見つかりません。resource_dir: {}",
+            resource_dir.to_string_lossy()
+        ));
     }
 
     #[cfg(target_os = "linux")]
     {
-        return Ok("yt-dlp".to_string());
+        Ok("yt-dlp".to_string())
     }
 }
 
@@ -67,38 +101,54 @@ fn ffmpeg_location(app: &AppHandle) -> Result<String, String> {
         return Ok("/usr/local/bin/ffmpeg".to_string());
     }
 
+    let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+
     #[cfg(target_os = "macos")]
     {
-        let path = app
-            .path()
-            .resource_dir()
-            .map_err(|e| e.to_string())?
-            .join("bin")
-            .join("ffmpeg");
+        let candidates = [
+            resource_dir.join("bin").join("ffmpeg"),
+            resource_dir.join("ffmpeg-universal-apple-darwin"),
+            resource_dir.join("ffmpeg-x86_64-apple-darwin"),
+            resource_dir.join("ffmpeg-aarch64-apple-darwin"),
+        ];
 
-        return Ok(path.to_string_lossy().to_string());
+        for path in candidates {
+            if path.exists() {
+                return Ok(path.to_string_lossy().to_string());
+            }
+        }
+
+        return Err(format!(
+            "同梱 ffmpeg が見つかりません。resource_dir: {}",
+            resource_dir.to_string_lossy()
+        ));
     }
 
     #[cfg(target_os = "windows")]
     {
-        let path = app
-            .path()
-            .resource_dir()
-            .map_err(|e| e.to_string())?
-            .join("ffmpeg-x86_64-pc-windows-msvc.exe");
+        let candidates = [
+            resource_dir
+                .join("bin")
+                .join("ffmpeg-x86_64-pc-windows-msvc.exe"),
+            resource_dir.join("ffmpeg-x86_64-pc-windows-msvc.exe"),
+            resource_dir.join("ffmpeg.exe"),
+        ];
 
-        return Ok(path.to_string_lossy().to_string());
+        for path in candidates {
+            if path.exists() {
+                return Ok(path.to_string_lossy().to_string());
+            }
+        }
+
+        return Err(format!(
+            "同梱 ffmpeg.exe が見つかりません。resource_dir: {}",
+            resource_dir.to_string_lossy()
+        ));
     }
 
     #[cfg(target_os = "linux")]
     {
-        let path = app
-            .path()
-            .resource_dir()
-            .map_err(|e| e.to_string())?
-            .join("ffmpeg-x86_64-unknown-linux-gnu");
-
-        return Ok(path.to_string_lossy().to_string());
+        Ok("ffmpeg".to_string())
     }
 }
 
@@ -107,8 +157,7 @@ fn resolve_save_path(save_path: String) -> Result<PathBuf, String> {
         return Ok(PathBuf::from(save_path));
     }
 
-    dirs::download_dir()
-        .ok_or_else(|| "ダウンロードフォルダを取得できませんでした".to_string())
+    dirs::download_dir().ok_or_else(|| "ダウンロードフォルダを取得できませんでした".to_string())
 }
 
 fn add_cookie_args(command: &mut Command, cookie_browser: &str) {
@@ -119,8 +168,8 @@ fn add_cookie_args(command: &mut Command, cookie_browser: &str) {
 
 #[tauri::command]
 fn get_default_download_dir() -> Result<String, String> {
-    let dir = dirs::download_dir()
-        .ok_or_else(|| "ダウンロードフォルダを取得できませんでした".to_string())?;
+    let dir =
+        dirs::download_dir().ok_or_else(|| "ダウンロードフォルダを取得できませんでした".to_string())?;
 
     Ok(dir.to_string_lossy().to_string())
 }
@@ -132,7 +181,7 @@ fn get_video_info(
     cookie_browser: String,
 ) -> Result<VideoInfo, String> {
     let yt_dlp = yt_dlp_path(&app)?;
-    let mut command = Command::new(yt_dlp);
+    let mut command = Command::new(&yt_dlp);
 
     command.args(["--dump-json", "--no-playlist"]);
     command.args(["--extractor-args", "youtube:player_client=default,ios"]);
@@ -159,10 +208,7 @@ fn get_video_info(
         .unwrap_or("タイトル不明")
         .to_string();
 
-    let thumbnail = json["thumbnail"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let thumbnail = json["thumbnail"].as_str().unwrap_or("").to_string();
 
     Ok(VideoInfo { title, thumbnail })
 }
@@ -230,7 +276,7 @@ fn download_video(
     let yt_dlp = yt_dlp_path(&app)?;
     let ffmpeg_path = ffmpeg_location(&app)?;
 
-    let mut command = Command::new(yt_dlp);
+    let mut command = Command::new(&yt_dlp);
 
     command.args(["--ffmpeg-location", &ffmpeg_path]);
     command.args(["--extractor-args", "youtube:player_client=default,ios"]);
@@ -257,11 +303,7 @@ fn download_video(
             "download-log",
             format!(
                 "[{}] MP3で保存します / 保存先: {} / 音質: {} / yt-dlp: {} / ffmpeg: {}",
-                job_id,
-                save_dir_text,
-                mp3_quality,
-                yt_dlp_path(&app).unwrap_or_default(),
-                ffmpeg_path
+                job_id, save_dir_text, mp3_quality, yt_dlp, ffmpeg_path
             ),
         );
     } else {
@@ -285,11 +327,7 @@ fn download_video(
             "download-log",
             format!(
                 "[{}] MP4で保存します / 保存先: {} / 画質: {} / yt-dlp: {} / ffmpeg: {}",
-                job_id,
-                save_dir_text,
-                quality_label,
-                yt_dlp_path(&app).unwrap_or_default(),
-                ffmpeg_path
+                job_id, save_dir_text, quality_label, yt_dlp, ffmpeg_path
             ),
         );
     }
