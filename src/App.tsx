@@ -1,7 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import React, {
+  memo,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { version } from "../package.json";
+import { friendlyError } from "./downloader";
 
 type FormatType = "mp4" | "mp3";
 type ItemStatus = "待機中" | "情報取得中" | "ダウンロード中" | "完了" | "エラー" | "キャンセル済み";
@@ -49,6 +55,276 @@ const cookieBrowsers = [
   { label: "Edge", value: "edge" },
 ];
 
+const DownloadCard = memo(function DownloadCard({
+  item,
+  updateItem,
+  getInfoForItem,
+  retryItem,
+  cancelItem,
+  removeItem,
+}: {
+  item: DownloadItem;
+  updateItem: (
+    id: string,
+    patch: Partial<DownloadItem>
+  ) => void;
+  getInfoForItem: (
+    item: DownloadItem
+  ) => void;
+  retryItem: (id: string) => void;
+  cancelItem: (id: string) => void;
+  removeItem: (id: string) => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 12,
+        padding: 12,
+        background: "#1e293b",
+        borderRadius: 16,
+        boxShadow:
+          "0 6px 20px rgba(0,0,0,0.3)",
+      }}
+    >
+      <div
+        style={{
+          width: 140,
+          height: 80,
+          background: "#020617",
+          borderRadius: 12,
+          overflow: "hidden",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "#64748b",
+          fontSize: 12,
+        }}
+      >
+        {item.thumbnail ? (
+          <img
+            loading="lazy"
+            src={item.thumbnail}
+            alt=""
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+            }}
+          />
+        ) : (
+          "No Image"
+        )}
+      </div>
+
+      <div style={{ flex: 1 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent:
+              "space-between",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
+          <div
+            style={{
+              fontWeight: 700,
+              fontSize: 16,
+            }}
+          >
+            {item.title || "タイトル未取得"}
+          </div>
+
+          <span style={{ fontSize: 12 }}>
+            {item.status}
+          </span>
+        </div>
+
+        <div
+          style={{
+            fontSize: 12,
+            color: "#94a3b8",
+            wordBreak: "break-all",
+          }}
+        >
+          {item.url}
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            marginTop: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <select
+            value={item.formatType}
+            onChange={(event) =>
+              updateItem(item.id, {
+                formatType:
+                  event.target
+                    .value as FormatType,
+              })
+            }
+            style={{
+              borderRadius: 6,
+              padding: "4px 8px",
+            }}
+          >
+            <option value="mp4">
+              MP4
+            </option>
+
+            <option value="mp3">
+              MP3
+            </option>
+          </select>
+
+          {item.formatType ===
+            "mp4" && (
+            <select
+              value={item.mp4Quality}
+              onChange={(event) =>
+                updateItem(item.id, {
+                  mp4Quality:
+                    event.target.value,
+                })
+              }
+              style={{
+                borderRadius: 6,
+                padding: "4px 8px",
+              }}
+            >
+              {mp4Qualities.map(
+                (quality) => (
+                  <option
+                    key={quality.value}
+                    value={quality.value}
+                  >
+                    {quality.label}
+                  </option>
+                )
+              )}
+            </select>
+          )}
+
+          {item.formatType ===
+            "mp3" && (
+            <select
+              value={item.mp3Quality}
+              onChange={(event) =>
+                updateItem(item.id, {
+                  mp3Quality:
+                    event.target.value,
+                })
+              }
+              style={{
+                borderRadius: 6,
+                padding: "4px 8px",
+              }}
+            >
+              {mp3Qualities.map(
+                (quality) => (
+                  <option
+                    key={quality.value}
+                    value={quality.value}
+                  >
+                    {quality.label}
+                  </option>
+                )
+              )}
+            </select>
+          )}
+
+          <button
+            onClick={() =>
+              getInfoForItem(item)
+            }
+            style={buttonStyle("orange")}
+          >
+            情報取得
+          </button>
+
+          <button
+            onClick={() =>
+              retryItem(item.id)
+            }
+            style={buttonStyle("blue")}
+          >
+            再試行
+          </button>
+
+          <button
+            onClick={() =>
+              cancelItem(item.id)
+            }
+            style={buttonStyle("red")}
+          >
+            停止
+          </button>
+
+          <button
+            onClick={() =>
+              removeItem(item.id)
+            }
+            style={buttonStyle("gray")}
+          >
+            削除
+          </button>
+        </div>
+
+        <div
+          style={{
+            height: 8,
+            background: "#334155",
+            borderRadius: 6,
+            marginTop: 8,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              height: "100%",
+              width: `${item.progress}%`,
+              background:
+                "linear-gradient(90deg,#2563eb,#22c55e)",
+              borderRadius: 6,
+              transition:
+                "width 0.12s linear",
+            }}
+          />
+        </div>
+
+        <div
+          style={{
+            fontSize: 12,
+            color: "#94a3b8",
+            marginTop: 4,
+          }}
+        >
+          {Math.round(item.progress)}%
+        </div>
+
+        {item.message && (
+          <div
+            style={{
+              fontSize: 12,
+              color: "#cbd5e1",
+              marginTop: 4,
+            }}
+          >
+            {item.message}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
+
+
 function createId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -57,19 +333,7 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function friendlyError(error: unknown) {
-  const text = String(error);
 
-  if (
-    text.includes("Sign in to confirm") ||
-    text.includes("not a bot") ||
-    text.includes("--cookies-from-browser")
-  ) {
-    return "YouTubeのbot判定が出ています。Cookie BrowserをChrome/Safari/Firefoxなどログイン済みブラウザに変更して再試行してください。";
-  }
-
-  return text;
-}
 
 function App() {
   const [urlText, setUrlText] = useState("");
@@ -533,53 +797,16 @@ function clearHistory() {
 
       <div style={{ display: "grid", gap: 12 }}>
         {items.map((item) => (
-          <div key={item.id} style={{ display: "flex", gap: 12, padding: 12, background: "#1e293b", borderRadius: 16, boxShadow: "0 6px 20px rgba(0,0,0,0.3)" }}>
-            <div style={{ width: 140, height: 80, background: "#020617", borderRadius: 12, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontSize: 12 }}>
-              {item.thumbnail ? <img loading="lazy" src={item.thumbnail} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "No Image"}
-            </div>
-
-            <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-                <div style={{ fontWeight: 700, fontSize: 16 }}>{item.title || "タイトル未取得"}</div>
-                <span style={{ fontSize: 12 }}>{item.status}</span>
-              </div>
-
-              <div style={{ fontSize: 12, color: "#94a3b8", wordBreak: "break-all" }}>{item.url}</div>
-
-              <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                <select value={item.formatType} onChange={(event) => updateItem(item.id, { formatType: event.target.value as FormatType })} style={{ borderRadius: 6, padding: "4px 8px" }}>
-                  <option value="mp4">MP4</option>
-                  <option value="mp3">MP3</option>
-                </select>
-
-                {item.formatType === "mp4" && (
-                  <select value={item.mp4Quality} onChange={(event) => updateItem(item.id, { mp4Quality: event.target.value })} style={{ borderRadius: 6, padding: "4px 8px" }}>
-                    {mp4Qualities.map((quality) => <option key={quality.value} value={quality.value}>{quality.label}</option>)}
-                  </select>
-                )}
-
-                {item.formatType === "mp3" && (
-                  <select value={item.mp3Quality} onChange={(event) => updateItem(item.id, { mp3Quality: event.target.value })} style={{ borderRadius: 6, padding: "4px 8px" }}>
-                    {mp3Qualities.map((quality) => <option key={quality.value} value={quality.value}>{quality.label}</option>)}
-                  </select>
-                )}
-
-                <button onClick={() => getInfoForItem(item)} style={buttonStyle("orange")}>情報取得</button>
-                <button onClick={() => retryItem(item.id)} style={buttonStyle("blue")}>再試行</button>
-                <button onClick={() => cancelItem(item.id)} style={buttonStyle("red")}>停止</button>
-                <button onClick={() => removeItem(item.id)} style={buttonStyle("gray")}>削除</button>
-              </div>
-
-              <div style={{ height: 8, background: "#334155", borderRadius: 6, marginTop: 8, overflow: "hidden" }}>
-                <div style={{ height: "100%", width: `${item.progress}%`, background: "linear-gradient(90deg,#2563eb,#22c55e)", borderRadius: 6, transition: "width 0.12s linear" }} />
-              </div>
-
-              <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>{Math.round(item.progress)}%</div>
-
-              {item.message && <div style={{ fontSize: 12, color: "#cbd5e1", marginTop: 4 }}>{item.message}</div>}
-            </div>
-          </div>
-        ))}
+  <DownloadCard
+    key={item.id}
+    item={item}
+    updateItem={updateItem}
+    getInfoForItem={getInfoForItem}
+    retryItem={retryItem}
+    cancelItem={cancelItem}
+    removeItem={removeItem}
+  />
+))}
       </div>
 
       {showLogs && logs.length > 0 && (
