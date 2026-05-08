@@ -1,10 +1,11 @@
 name: Build Tauri App
 
 on:
+  workflow_dispatch:
   push:
     branches:
-      - main
       - tauri-v2-current
+      - cleanup-universal-bin
 
 jobs:
   build:
