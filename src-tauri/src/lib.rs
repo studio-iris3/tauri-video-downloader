@@ -351,6 +351,7 @@ fn download_video(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+    .plugin(tauri_plugin_opener::init())
         .manage(DownloadState {
             cancelled_jobs: Arc::new(Mutex::new(HashSet::new())),
         })

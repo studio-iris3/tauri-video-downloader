@@ -24,7 +24,7 @@ fn bundled_bin_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(resource_dir.join("bin"))
 }
 
-fn find_bundled_binary(app: &AppHandle, names: &[&str]) -> Result<PathBuf, String> {
+pub fn find_bundled_binary(app: &AppHandle, names: &[&str]) -> Result<PathBuf, String> {
     let bin_dir = bundled_bin_dir(app)?;
 
     for name in names {
@@ -51,16 +51,21 @@ pub fn yt_dlp_path(app: &AppHandle) -> Result<PathBuf, String> {
         }
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        return find_bundled_binary(app, &["yt-dlp-x86_64-pc-windows-msvc.exe"]);
-    }
+    yt_dlp_bundled_path(app)
+}
 
-    #[cfg(target_os = "macos")]
-    {
-        return find_bundled_binary(app, &["yt-dlp-universal-apple-darwin"]);
-    }
+#[cfg(target_os = "windows")]
+fn yt_dlp_bundled_path(app: &AppHandle) -> Result<PathBuf, String> {
+    find_bundled_binary(app, &["yt-dlp-x86_64-pc-windows-msvc.exe"])
+}
 
+#[cfg(target_os = "macos")]
+fn yt_dlp_bundled_path(app: &AppHandle) -> Result<PathBuf, String> {
+    find_bundled_binary(app, &["yt-dlp-universal-apple-darwin"])
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn yt_dlp_bundled_path(_app: &AppHandle) -> Result<PathBuf, String> {
     Err("このOS用の yt-dlp が見つかりませんでした".to_string())
 }
 
@@ -72,15 +77,20 @@ pub fn ffmpeg_location(app: &AppHandle) -> Result<PathBuf, String> {
         }
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        return find_bundled_binary(app, &["ffmpeg-x86_64-pc-windows-msvc.exe"]);
-    }
+    ffmpeg_bundled_path(app)
+}
 
-    #[cfg(target_os = "macos")]
-    {
-        return find_bundled_binary(app, &["ffmpeg-universal-apple-darwin"]);
-    }
+#[cfg(target_os = "windows")]
+fn ffmpeg_bundled_path(app: &AppHandle) -> Result<PathBuf, String> {
+    find_bundled_binary(app, &["ffmpeg-x86_64-pc-windows-msvc.exe"])
+}
 
+#[cfg(target_os = "macos")]
+fn ffmpeg_bundled_path(app: &AppHandle) -> Result<PathBuf, String> {
+    find_bundled_binary(app, &["ffmpeg-universal-apple-darwin"])
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn ffmpeg_bundled_path(_app: &AppHandle) -> Result<PathBuf, String> {
     Err("このOS用の ffmpeg が見つかりませんでした".to_string())
 }

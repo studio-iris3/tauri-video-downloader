@@ -1,14 +1,9 @@
-import React, {
-  memo,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import React, { memo, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { version } from "../package.json";
 import { friendlyError } from "./downloader";
-
 import {
   clearSavedHistory,
   loadHistory,
@@ -17,10 +12,23 @@ import {
 } from "./history";
 
 type FormatType = "mp4" | "mp3";
-type ItemStatus = "待機中" | "情報取得中" | "ダウンロード中" | "完了" | "エラー" | "キャンセル済み";
+type ItemStatus =
+  | "待機中"
+  | "情報取得中"
+  | "ダウンロード中"
+  | "完了"
+  | "エラー"
+  | "キャンセル済み";
 
-type VideoInfo = { title: string; thumbnail: string };
-type DownloadProgressPayload = { job_id: string; percent: number };
+type VideoInfo = {
+  title: string;
+  thumbnail: string;
+};
+
+type DownloadProgressPayload = {
+  job_id: string;
+  percent: number;
+};
 
 type DownloadItem = {
   id: string;
@@ -34,7 +42,6 @@ type DownloadItem = {
   status: ItemStatus;
   message: string;
 };
-
 
 const mp4Qualities = [
   { label: "最高画質", value: "best" },
@@ -58,6 +65,14 @@ const cookieBrowsers = [
   { label: "Edge", value: "edge" },
 ];
 
+function createId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const DownloadCard = memo(function DownloadCard({
   item,
   updateItem,
@@ -67,43 +82,15 @@ const DownloadCard = memo(function DownloadCard({
   removeItem,
 }: {
   item: DownloadItem;
-  updateItem: (
-    id: string,
-    patch: Partial<DownloadItem>
-  ) => void;
-  getInfoForItem: (
-    item: DownloadItem
-  ) => void;
+  updateItem: (id: string, patch: Partial<DownloadItem>) => void;
+  getInfoForItem: (item: DownloadItem) => void;
   retryItem: (id: string) => void;
   cancelItem: (id: string) => void;
   removeItem: (id: string) => void;
 }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        gap: 12,
-        padding: 12,
-        background: "#1e293b",
-        borderRadius: 16,
-        boxShadow:
-          "0 6px 20px rgba(0,0,0,0.3)",
-      }}
-    >
-      <div
-        style={{
-          width: 140,
-          height: 80,
-          background: "#020617",
-          borderRadius: 12,
-          overflow: "hidden",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "#64748b",
-          fontSize: 12,
-        }}
-      >
+    <div style={cardStyle}>
+      <div style={thumbnailBoxStyle}>
         {item.thumbnail ? (
           <img
             loading="lazy"
@@ -121,222 +108,95 @@ const DownloadCard = memo(function DownloadCard({
       </div>
 
       <div style={{ flex: 1 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent:
-              "space-between",
-            alignItems: "center",
-            gap: 12,
-          }}
-        >
-          <div
-            style={{
-              fontWeight: 700,
-              fontSize: 16,
-            }}
-          >
+        <div style={cardHeaderStyle}>
+          <div style={{ fontWeight: 800, fontSize: 16 }}>
             {item.title || "タイトル未取得"}
           </div>
-
-          <span style={{ fontSize: 12 }}>
-            {item.status}
-          </span>
+          <span style={statusBadgeStyle}>{item.status}</span>
         </div>
 
-        <div
-          style={{
-            fontSize: 12,
-            color: "#94a3b8",
-            wordBreak: "break-all",
-          }}
-        >
-          {item.url}
-        </div>
+        <div style={urlTextStyle}>{item.url}</div>
 
-        <div
-          style={{
-            display: "flex",
-            gap: 6,
-            marginTop: 8,
-            flexWrap: "wrap",
-          }}
-        >
+        <div style={cardButtonRowStyle}>
           <select
             value={item.formatType}
             onChange={(event) =>
               updateItem(item.id, {
-                formatType:
-                  event.target
-                    .value as FormatType,
+                formatType: event.target.value as FormatType,
               })
             }
-            style={{
-              borderRadius: 6,
-              padding: "4px 8px",
-            }}
+            style={selectStyle}
           >
-            <option value="mp4">
-              MP4
-            </option>
-
-            <option value="mp3">
-              MP3
-            </option>
+            <option value="mp4">MP4</option>
+            <option value="mp3">MP3</option>
           </select>
 
-          {item.formatType ===
-            "mp4" && (
+          {item.formatType === "mp4" && (
             <select
               value={item.mp4Quality}
               onChange={(event) =>
                 updateItem(item.id, {
-                  mp4Quality:
-                    event.target.value,
+                  mp4Quality: event.target.value,
                 })
               }
-              style={{
-                borderRadius: 6,
-                padding: "4px 8px",
-              }}
+              style={selectStyle}
             >
-              {mp4Qualities.map(
-                (quality) => (
-                  <option
-                    key={quality.value}
-                    value={quality.value}
-                  >
-                    {quality.label}
-                  </option>
-                )
-              )}
+              {mp4Qualities.map((quality) => (
+                <option key={quality.value} value={quality.value}>
+                  {quality.label}
+                </option>
+              ))}
             </select>
           )}
 
-          {item.formatType ===
-            "mp3" && (
+          {item.formatType === "mp3" && (
             <select
               value={item.mp3Quality}
               onChange={(event) =>
                 updateItem(item.id, {
-                  mp3Quality:
-                    event.target.value,
+                  mp3Quality: event.target.value,
                 })
               }
-              style={{
-                borderRadius: 6,
-                padding: "4px 8px",
-              }}
+              style={selectStyle}
             >
-              {mp3Qualities.map(
-                (quality) => (
-                  <option
-                    key={quality.value}
-                    value={quality.value}
-                  >
-                    {quality.label}
-                  </option>
-                )
-              )}
+              {mp3Qualities.map((quality) => (
+                <option key={quality.value} value={quality.value}>
+                  {quality.label}
+                </option>
+              ))}
             </select>
           )}
 
-          <button
-            onClick={() =>
-              getInfoForItem(item)
-            }
-            style={buttonStyle("orange")}
-          >
+          <button onClick={() => getInfoForItem(item)} style={buttonStyle("orange")}>
             情報取得
           </button>
-
-          <button
-            onClick={() =>
-              retryItem(item.id)
-            }
-            style={buttonStyle("blue")}
-          >
+          <button onClick={() => retryItem(item.id)} style={buttonStyle("blue")}>
             再試行
           </button>
-
-          <button
-            onClick={() =>
-              cancelItem(item.id)
-            }
-            style={buttonStyle("red")}
-          >
+          <button onClick={() => cancelItem(item.id)} style={buttonStyle("red")}>
             停止
           </button>
-
-          <button
-            onClick={() =>
-              removeItem(item.id)
-            }
-            style={buttonStyle("gray")}
-          >
+          <button onClick={() => removeItem(item.id)} style={buttonStyle("gray")}>
             削除
           </button>
         </div>
 
-        <div
-          style={{
-            height: 8,
-            background: "#334155",
-            borderRadius: 6,
-            marginTop: 8,
-            overflow: "hidden",
-          }}
-        >
+        <div style={progressTrackStyle}>
           <div
             style={{
-              height: "100%",
+              ...progressBarStyle,
               width: `${item.progress}%`,
-              background:
-                "linear-gradient(90deg,#2563eb,#22c55e)",
-              borderRadius: 6,
-              transition:
-                "width 0.12s linear",
             }}
           />
         </div>
 
-        <div
-          style={{
-            fontSize: 12,
-            color: "#94a3b8",
-            marginTop: 4,
-          }}
-        >
-          {Math.round(item.progress)}%
-        </div>
+        <div style={progressTextStyle}>{Math.round(item.progress)}%</div>
 
-        {item.message && (
-          <div
-            style={{
-              fontSize: 12,
-              color: "#cbd5e1",
-              marginTop: 4,
-            }}
-          >
-            {item.message}
-          </div>
-        )}
+        {item.message && <div style={itemMessageStyle}>{item.message}</div>}
       </div>
     </div>
   );
 });
-
-
-
-function createId() {
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-
 
 function App() {
   const [urlText, setUrlText] = useState("");
@@ -362,113 +222,85 @@ function App() {
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
+
   useEffect(() => {
-  showLogsRef.current = showLogs;
+    showLogsRef.current = showLogs;
   }, [showLogs]);
+
   useEffect(() => {
-  try {
     setHistory(loadHistory());
-  } catch {
-    // ignore
-  }
-}, []);
+  }, []);
 
   useEffect(() => {
-  invoke<string>("get_default_download_dir")
-    .then((dir) => {
-      setSavePath((current) => (current.trim() ? current : dir));
-    })
-    .catch(() => {
-      if (showLogsRef.current) {
-        setLogs((prev) => [
-          ...prev.slice(-30),
-          "デフォルトのダウンロードフォルダを取得できませんでした",
-        ]);
-      }
-    });
+    invoke<string>("get_default_download_dir")
+      .then((dir) => {
+        setSavePath((current) => (current.trim() ? current : dir));
+      })
+      .catch(() => {
+        if (showLogsRef.current) {
+          setLogs((prev) => [
+            ...prev.slice(-30),
+            "デフォルトのダウンロードフォルダを取得できませんでした",
+          ]);
+        }
+      });
 
-  let lastProgressUpdate = 0;
+    let lastProgressUpdate = 0;
 
-  const unlistenProgress = listen<DownloadProgressPayload>(
-    "download-progress",
-    (event) => {
-      const now = Date.now();
+    const unlistenProgress = listen<DownloadProgressPayload>(
+      "download-progress",
+      (event) => {
+        const now = Date.now();
+        if (now - lastProgressUpdate < 1000) return;
+        lastProgressUpdate = now;
 
-      if (now - lastProgressUpdate < 1000) return;
-      lastProgressUpdate = now;
+        const { job_id, percent } = event.payload;
+        const roundedPercent = Math.round(Math.min(100, Math.max(0, percent)));
+        const previousPercent = progressRef.current[job_id] ?? 0;
 
-      const { job_id, percent } = event.payload;
-
-      const widthPercent = Math.min(
-        100,
-        Math.max(0, percent)
-      );
-
-      const roundedPercent = Math.round(widthPercent);
-
-      const previousPercent =
-        progressRef.current[job_id] ?? 0;
-
-      if (
-        Math.abs(
-          roundedPercent - previousPercent
-        ) < 1 &&
-        roundedPercent !== 100
-      ) {
-        return;
-      }
-
-      progressRef.current[job_id] =
-        roundedPercent;
-
-      setItems((prev) =>
-        prev.map((item) =>
-          item.id === job_id &&
-          Math.round(item.progress) !==
-            roundedPercent
-            ? {
-                ...item,
-                progress: roundedPercent,
-              }
-            : item
-        )
-      );
-    }
-  );
-
-  const unlistenLog = listen<string>(
-    "download-log",
-    (event) => {
-      if (!showLogsRef.current) {
-        return;
-      }
-
-      setLogs((prev) => {
         if (
-          prev[prev.length - 1] ===
-          event.payload
+          Math.abs(roundedPercent - previousPercent) < 1 &&
+          roundedPercent !== 100
         ) {
-          return prev;
+          return;
         }
 
-        return [
-          ...prev.slice(-30),
-          event.payload,
-        ];
+        progressRef.current[job_id] = roundedPercent;
+
+        setItems((prev) =>
+          prev.map((item) =>
+            item.id === job_id && Math.round(item.progress) !== roundedPercent
+              ? { ...item, progress: roundedPercent }
+              : item,
+          ),
+        );
+      },
+    );
+
+    const unlistenLog = listen<string>("download-log", (event) => {
+      if (!showLogsRef.current) return;
+
+      setLogs((prev) => {
+        if (prev[prev.length - 1] === event.payload) return prev;
+        return [...prev.slice(-30), event.payload];
       });
+    });
+
+    return () => {
+      unlistenProgress.then((unlisten) => unlisten());
+      unlistenLog.then((unlisten) => unlisten());
+    };
+  }, []);
+
+  async function openLatestRelease() {
+    try {
+      await openUrl(
+        "https://github.com/studio-iris3/tauri-video-downloader/releases/latest",
+      );
+    } catch {
+      setMessage("Releaseページを開けませんでした");
     }
-  );
-
-  return () => {
-    unlistenProgress.then((unlisten) =>
-      unlisten()
-    );
-
-    unlistenLog.then((unlisten) =>
-      unlisten()
-    );
-  };
-}, []);
+  }
 
   async function chooseFolder() {
     const input = window.prompt("保存先フォルダのフルパスを入力してください", savePath);
@@ -504,7 +336,7 @@ function App() {
 
     setItems((prev) => [...prev, ...newItems]);
     setUrlText("");
-    setMessage(`${newItems.length}件追加`);
+    setMessage(`${newItems.length}件追加しました`);
   }
 
   function updateItem(id: string, patch: Partial<DownloadItem>) {
@@ -516,7 +348,7 @@ function App() {
     cancelledIdsRef.current.clear();
     setItems([]);
     setLogs([]);
-    setMessage("リストクリア");
+    setMessage("リストをクリアしました");
   }
 
   function removeItem(id: string) {
@@ -534,7 +366,7 @@ function App() {
         mp3Quality: bulkMp3Quality,
       })),
     );
-    setMessage("一括設定適用");
+    setMessage("一括設定を適用しました");
   }
 
   async function getInfoForItem(item: DownloadItem) {
@@ -562,7 +394,7 @@ function App() {
 
   async function getInfoAll() {
     if (!items.length) {
-      setMessage("URL追加してください");
+      setMessage("URLを追加してください");
       return;
     }
 
@@ -578,31 +410,30 @@ function App() {
   }
 
   function addHistory(title: string, url: string) {
-  const next: DownloadHistory[] = [
-    {
-      title,
-      url,
-      date: new Date().toLocaleString(),
-    },
-    ...history,
-  ].slice(0, 30);
+    const next: DownloadHistory[] = [
+      {
+        title,
+        url,
+        date: new Date().toLocaleString(),
+      },
+      ...history,
+    ].slice(0, 30);
 
-  setHistory(next);
+    setHistory(next);
+    saveHistory(next);
+  }
 
-  saveHistory(next);
-}
+  function clearHistory() {
+    setHistory([]);
+    clearSavedHistory();
+    setMessage("ダウンロード履歴をクリアしました");
+  }
 
-function clearHistory() {
-  setHistory([]);
-  clearSavedHistory();
-  setMessage("ダウンロード履歴をクリアしました");
-}
   async function runSingleDownload(id: string) {
     if (cancelledIdsRef.current.has(id)) return;
 
     const item = itemsRef.current.find((candidate) => candidate.id === id);
-    if (!item) return;
-    if (item.status === "完了") return;
+    if (!item || item.status === "完了") return;
 
     updateItem(id, {
       status: "ダウンロード中",
@@ -633,10 +464,8 @@ function clearHistory() {
           progress: 100,
           message: result,
         });
-        addHistory(
-  item.title || "タイトル未取得",
-  item.url
-);
+
+        addHistory(item.title || "タイトル未取得", item.url);
       }
     } catch (error) {
       if (cancelledIdsRef.current.has(id)) {
@@ -672,7 +501,7 @@ function clearHistory() {
     try {
       await invoke<string>("cancel_download", { jobId: id });
     } catch {
-      // すでに終了済みの場合もあるためUI側はキャンセル扱いにする
+      // ignore
     }
 
     updateItem(id, {
@@ -684,7 +513,7 @@ function clearHistory() {
 
   async function downloadAll() {
     if (!items.length) {
-      setMessage("URL追加してください");
+      setMessage("URLを追加してください");
       return;
     }
 
@@ -703,214 +532,170 @@ function clearHistory() {
       while (cursor < queue.length) {
         const id = queue[cursor];
         cursor += 1;
-
         await runSingleDownload(id);
         await sleep(1500);
       }
     }
 
     await Promise.all(Array.from({ length: Math.min(concurrentCount, queue.length) }, () => worker()));
+
     setIsDownloading(false);
     setMessage("ダウンロード処理完了");
   }
 
   return (
-    <div style={{ padding: 24, fontFamily: "-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif", background: "linear-gradient(135deg,#0f172a,#020617)", minHeight: "100vh", color: "#e5e7eb" }}>
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700 }}>Studio Iris Video Downloader</h1>
-        <button onClick={() => setShowHelp(true)} style={buttonStyle("purple")}>？ヘルプ</button>
-      </header>
+    <div style={appStyle}>
+      <h1 style={titleStyle}>Studio Iris Video Downloader</h1>
 
-      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
-        <select value={bulkFormatType} onChange={(event) => setBulkFormatType(event.target.value as FormatType)}>
+      <div style={controlPanelStyle}>
+        <select value={bulkFormatType} onChange={(event) => setBulkFormatType(event.target.value as FormatType)} style={selectStyle}>
           <option value="mp4">MP4</option>
           <option value="mp3">MP3</option>
         </select>
 
         {bulkFormatType === "mp4" && (
-          <select value={bulkMp4Quality} onChange={(event) => setBulkMp4Quality(event.target.value)}>
-            {mp4Qualities.map((quality) => <option key={quality.value} value={quality.value}>{quality.label}</option>)}
+          <select value={bulkMp4Quality} onChange={(event) => setBulkMp4Quality(event.target.value)} style={selectStyle}>
+            {mp4Qualities.map((quality) => (
+              <option key={quality.value} value={quality.value}>
+                {quality.label}
+              </option>
+            ))}
           </select>
         )}
 
         {bulkFormatType === "mp3" && (
-          <select value={bulkMp3Quality} onChange={(event) => setBulkMp3Quality(event.target.value)}>
-            {mp3Qualities.map((quality) => <option key={quality.value} value={quality.value}>{quality.label}</option>)}
+          <select value={bulkMp3Quality} onChange={(event) => setBulkMp3Quality(event.target.value)} style={selectStyle}>
+            {mp3Qualities.map((quality) => (
+              <option key={quality.value} value={quality.value}>
+                {quality.label}
+              </option>
+            ))}
           </select>
         )}
 
-        <select value={cookieBrowser} onChange={(event) => setCookieBrowser(event.target.value)}>
-          {cookieBrowsers.map((browser) => <option key={browser.value} value={browser.value}>{browser.label}</option>)}
+        <select value={cookieBrowser} onChange={(event) => setCookieBrowser(event.target.value)} style={selectStyle}>
+          {cookieBrowsers.map((browser) => (
+            <option key={browser.value} value={browser.value}>
+              {browser.label}
+            </option>
+          ))}
         </select>
 
-        <input
-          type="number"
-          min={1}
-          max={2}
-          value={concurrentCount}
-          onChange={(event) => setConcurrentCount(Math.min(2, Math.max(1, Number(event.target.value))))}
-          style={{ width: 60 }}
-        />
+        <div style={countBoxStyle}>
+          <div style={countLabelStyle}>同時DL数</div>
+          <input
+            type="number"
+            min={1}
+            max={2}
+            value={concurrentCount}
+            onChange={(event) =>
+              setConcurrentCount(Math.min(2, Math.max(1, Number(event.target.value))))
+            }
+            style={countInputStyle}
+          />
+        </div>
 
         <button onClick={applyBulkSettings} style={buttonStyle("blue")}>一括適用</button>
         <button onClick={getInfoAll} style={buttonStyle("orange")}>全URL情報取得</button>
+        <button onClick={openLatestRelease} style={buttonStyle("green")}>アップデート確認</button>
         <button
-  onClick={() => {
-    setShowLogs((prev) => {
-      const next = !prev;
-      if (!next) {
-        setLogs([]);
-      }
-      return next;
-    });
-  }}
-  style={buttonStyle("gray")}
->
+          onClick={() => {
+            setShowLogs((prev) => {
+              const next = !prev;
+              if (!next) setLogs([]);
+              return next;
+            });
+          }}
+          style={buttonStyle("gray")}
+        >
           {showLogs ? "ログを隠す" : `ログ表示${logs.length ? ` (${logs.length})` : ""}`}
         </button>
       </div>
 
-      <div style={{ marginBottom: 12, padding: 12, borderRadius: 14, background: "#1e293b", border: "1px solid #334155", color: "#cbd5e1", fontSize: 13 }}>
-        保存先: {savePath || "未指定：自動でダウンロードフォルダに保存"}
+      <div style={savePanelStyle}>
+        <span style={{ color: "#94a3b8" }}>保存先:</span>
+        <span>{savePath || "未指定：自動でダウンロードフォルダに保存"}</span>
+        <button onClick={chooseFolder} style={smallButtonStyle}>選択</button>
       </div>
 
-      <div style={{ display: "flex", gap: 16, marginBottom: 20 }}>
-        <textarea value={urlText} onChange={(event) => setUrlText(event.target.value)} placeholder="URLを1行ずつ" style={{ flex: 1, height: 100, padding: 12, borderRadius: 14, background: "#1e293b", border: "1px solid #334155", color: "#e5e7eb", outline: "none" }} />
+      <div style={inputPanelStyle}>
+        <textarea
+          value={urlText}
+          onChange={(event) => setUrlText(event.target.value)}
+          placeholder="URLを1行ずつ"
+          style={textareaStyle}
+        />
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={sideButtonColumnStyle}>
           <button onClick={addUrls} style={buttonStyle("blue")}>追加</button>
-          <button onClick={chooseFolder} style={buttonStyle("green")}>保存先</button>
           <button onClick={clearItems} style={buttonStyle("red")}>クリア</button>
-          <button onClick={downloadAll} style={buttonStyle("purple")}>{isDownloading ? "実行中..." : "ダウンロード"}</button>
+          <button onClick={downloadAll} style={buttonStyle("purple")}>
+            {isDownloading ? "実行中..." : "ダウンロード"}
+          </button>
+          <button onClick={() => setShowHelp(true)} style={buttonStyle("gray")}>？ヘルプ</button>
         </div>
       </div>
 
-      {message && (
-        <div style={{ marginBottom: 16, padding: 10, borderRadius: 12, background: "#0f172a", border: "1px solid #334155", color: "#cbd5e1" }}>
-          {message}
-        </div>
-      )}
+      {message && <div style={messageStyle}>{message}</div>}
 
       <div style={{ display: "grid", gap: 12 }}>
         {items.map((item) => (
-  <DownloadCard
-    key={item.id}
-    item={item}
-    updateItem={updateItem}
-    getInfoForItem={getInfoForItem}
-    retryItem={retryItem}
-    cancelItem={cancelItem}
-    removeItem={removeItem}
-  />
-))}
+          <DownloadCard
+            key={item.id}
+            item={item}
+            updateItem={updateItem}
+            getInfoForItem={getInfoForItem}
+            retryItem={retryItem}
+            cancelItem={cancelItem}
+            removeItem={removeItem}
+          />
+        ))}
       </div>
 
       {showLogs && logs.length > 0 && (
-        <div style={{ marginTop: 20, padding: 12, background: "#020617", borderRadius: 12, border: "1px solid #334155", maxHeight: 120, overflow: "auto", fontSize: 12, color: "#94a3b8" }}>
-          {logs.map((log, index) => <div key={index}>{log}</div>)}
+        <div style={logsStyle}>
+          {logs.map((log, index) => (
+            <div key={index}>{log}</div>
+          ))}
         </div>
       )}
 
       {history.length > 0 && (
-  <div
-    style={{
-      marginTop: 24,
-      background: "#111827",
-      borderRadius: 14,
-      padding: 16,
-      border: "1px solid #334155",
-    }}
-  >
-    <div
-  style={{
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  }}
->
-  <h3
-    style={{
-      margin: 0,
-    }}
-  >
-    ダウンロード履歴
-  </h3>
-
-  <button
-    onClick={clearHistory}
-    style={buttonStyle("red")}
-  >
-    履歴クリア
-  </button>
-</div>
-
-    <div
-      style={{
-        display: "grid",
-        gap: 8,
-        maxHeight: 180,
-        overflow: "auto",
-      }}
-    >
-      {history.map((entry, index) => (
-        <div
-          key={index}
-          style={{
-            padding: 10,
-            borderRadius: 10,
-            background: "#1e293b",
-            fontSize: 12,
-          }}
-        >
-          <div
-            style={{
-              fontWeight: 700,
-            }}
-          >
-            {entry.title}
+        <div style={historyPanelStyle}>
+          <div style={historyHeaderStyle}>
+            <h3 style={{ margin: 0 }}>ダウンロード履歴</h3>
+            <button onClick={clearHistory} style={buttonStyle("red")}>履歴クリア</button>
           </div>
 
-          <div
-            style={{
-              color: "#94a3b8",
-              wordBreak: "break-all",
-            }}
-          >
-            {entry.url}
-          </div>
-
-          <div
-            style={{
-              color: "#64748b",
-              marginTop: 4,
-            }}
-          >
-            {entry.date}
+          <div style={{ display: "grid", gap: 8, maxHeight: 180, overflow: "auto" }}>
+            {history.map((entry, index) => (
+              <div key={index} style={historyItemStyle}>
+                <div style={{ fontWeight: 800 }}>{entry.title}</div>
+                <div style={{ color: "#94a3b8", wordBreak: "break-all" }}>{entry.url}</div>
+                <div style={{ color: "#64748b", marginTop: 4 }}>{entry.date}</div>
+              </div>
+            ))}
           </div>
         </div>
-      ))}
-    </div>
-  </div>
-)}
-      <footer style={{ textAlign: "center", marginTop: 32, color: "#64748b", fontSize: 12 }}>
+      )}
+
+      <footer style={footerStyle}>
         &copy; 2026 Studio Iris | v{version}
       </footer>
 
       {showHelp && (
-        <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(0,0,0,0.6)", display: "flex", justifyContent: "center", alignItems: "center" }}>
-          <div style={{ background: "#1e293b", padding: 24, borderRadius: 16, width: 440, boxShadow: "0 8px 32px rgba(0,0,0,0.6)" }}>
+        <div style={modalBackdropStyle}>
+          <div style={modalStyle}>
             <h2 style={{ marginTop: 0 }}>使い方</h2>
-            <ul style={{ paddingLeft: 20 }}>
+            <ul style={{ paddingLeft: 20, lineHeight: 1.7 }}>
               <li>URLを1行ずつ入力して「追加」</li>
               <li>MP4/MP3、画質・音質は個別・一括設定可能</li>
               <li>Bot判定対策のため、情報取得とDLは控えめな同時実行にしています</li>
-              <li>Cookie対応：年齢制限・ログイン動画・bot判定対策用</li>
               <li>Cookie Browserはログイン済みブラウザを選んでください</li>
               <li>保存先未指定時はダウンロードフォルダに自動保存</li>
-              <li>ログは通常非表示です。必要な時だけ「ログ表示」を押してください</li>
+              <li>QuickTime互換のためH.264 MP4を優先します</li>
             </ul>
-            <button onClick={() => setShowHelp(false)} style={{ marginTop: 12, padding: "6px 14px", borderRadius: 8, background: "linear-gradient(135deg,#7c3aed,#2563eb)", color: "#fff" }}>閉じる</button>
+            <button onClick={() => setShowHelp(false)} style={buttonStyle("purple")}>閉じる</button>
           </div>
         </div>
       )}
@@ -918,9 +703,115 @@ function clearHistory() {
   );
 }
 
-const buttonStyle = (color: "blue" | "green" | "red" | "purple" | "orange" | "gray") => {
+const appStyle: React.CSSProperties = {
+  padding: 20,
+  fontFamily: "-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif",
+  background: "radial-gradient(circle at top left,#13233f,#020617 45%,#020617)",
+  minHeight: "100vh",
+  color: "#e5e7eb",
+};
+
+const titleStyle: React.CSSProperties = {
+  fontSize: 28,
+  fontWeight: 900,
+  letterSpacing: "-0.04em",
+  marginBottom: 56,
+  textAlign: "left",
+};
+
+const controlPanelStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 10,
+  alignItems: "center",
+  marginBottom: 22,
+  flexWrap: "wrap",
+};
+
+const selectStyle: React.CSSProperties = {
+  height: 40,
+  padding: "0 10px",
+  borderRadius: 10,
+  border: "1px solid rgba(148,163,184,0.3)",
+  background: "linear-gradient(180deg,#334155,#1e293b)",
+  color: "#ffffff",
+  fontWeight: 800,
+  fontSize: 14,
+  outline: "none",
+};
+
+const countBoxStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  height: 40,
+  padding: "0 10px",
+  borderRadius: 10,
+  border: "1px solid rgba(148,163,184,0.3)",
+  background: "linear-gradient(180deg,#334155,#1e293b)",
+};
+
+const countLabelStyle: React.CSSProperties = {
+  color: "#e5e7eb",
+  fontWeight: 800,
+  fontSize: 13,
+  whiteSpace: "nowrap",
+  marginBottom: 0,
+};
+
+const countInputStyle: React.CSSProperties = {
+  width: 48,
+  height: 28,
+  borderRadius: 8,
+  border: "1px solid rgba(148,163,184,0.3)",
+  background: "#0f172a",
+  color: "#ffffff",
+  fontSize: 15,
+  fontWeight: 800,
+  textAlign: "center",
+};
+
+const savePanelStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 16,
+  marginBottom: 20,
+  padding: "20px 24px",
+  borderRadius: 18,
+  background: "rgba(30,41,59,0.82)",
+  border: "1px solid rgba(148,163,184,0.25)",
+  fontSize: 18,
+};
+
+const inputPanelStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 16,
+  marginBottom: 20,
+};
+
+const textareaStyle: React.CSSProperties = {
+  flex: 1,
+  height: 160,
+  padding: 20,
+  borderRadius: 18,
+  background: "rgba(30,41,59,0.82)",
+  border: "1px solid rgba(148,163,184,0.25)",
+  color: "#e5e7eb",
+  outline: "none",
+  fontSize: 14,
+  resize: "vertical",
+};
+
+const sideButtonColumnStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 10,
+};
+
+const buttonStyle = (
+  color: "blue" | "green" | "red" | "purple" | "orange" | "gray",
+): React.CSSProperties => {
   const map: Record<string, string> = {
-    blue: "linear-gradient(135deg,#2563eb,#22c55e)",
+    blue: "linear-gradient(135deg,#2563eb,#14b8a6)",
     green: "linear-gradient(135deg,#16a34a,#22c55e)",
     red: "linear-gradient(135deg,#dc2626,#f87171)",
     purple: "linear-gradient(135deg,#7c3aed,#2563eb)",
@@ -929,14 +820,174 @@ const buttonStyle = (color: "blue" | "green" | "red" | "purple" | "orange" | "gr
   };
 
   return {
-    padding: "6px 12px",
-    borderRadius: 8,
+    minHeight: 40,
+    padding: "0 14px",
+    fontSize: 13,
+    whiteSpace: "nowrap",
     border: "none",
     background: map[color],
     color: "#fff",
-    fontWeight: 700,
+    fontWeight: 900,
     cursor: "pointer",
+    boxShadow: "0 10px 22px rgba(0,0,0,0.25)",
   };
+};
+
+const smallButtonStyle: React.CSSProperties = {
+  marginLeft: "auto",
+  padding: "10px 18px",
+  borderRadius: 12,
+  border: "1px solid rgba(148,163,184,0.3)",
+  background: "linear-gradient(180deg,#475569,#334155)",
+  color: "#fff",
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const messageStyle: React.CSSProperties = {
+  marginBottom: 16,
+  padding: 14,
+  borderRadius: 14,
+  background: "rgba(15,23,42,0.9)",
+  border: "1px solid rgba(148,163,184,0.25)",
+  color: "#cbd5e1",
+};
+
+const cardStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 14,
+  padding: 14,
+  background: "rgba(30,41,59,0.9)",
+  borderRadius: 18,
+  border: "1px solid rgba(148,163,184,0.2)",
+  boxShadow: "0 10px 26px rgba(0,0,0,0.32)",
+};
+
+const thumbnailBoxStyle: React.CSSProperties = {
+  width: 150,
+  height: 86,
+  background: "#020617",
+  borderRadius: 14,
+  overflow: "hidden",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  color: "#64748b",
+  fontSize: 12,
+};
+
+const cardHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 12,
+};
+
+const statusBadgeStyle: React.CSSProperties = {
+  fontSize: 12,
+  padding: "4px 10px",
+  borderRadius: 999,
+  background: "rgba(15,23,42,0.9)",
+  color: "#cbd5e1",
+};
+
+const urlTextStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: "#94a3b8",
+  wordBreak: "break-all",
+  marginTop: 4,
+};
+
+const cardButtonRowStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 6,
+  marginTop: 10,
+  flexWrap: "wrap",
+};
+
+const progressTrackStyle: React.CSSProperties = {
+  height: 8,
+  background: "#334155",
+  borderRadius: 999,
+  marginTop: 10,
+  overflow: "hidden",
+};
+
+const progressBarStyle: React.CSSProperties = {
+  height: "100%",
+  background: "linear-gradient(90deg,#2563eb,#22c55e)",
+  borderRadius: 999,
+  transition: "width 0.12s linear",
+};
+
+const progressTextStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: "#94a3b8",
+  marginTop: 4,
+};
+
+const itemMessageStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: "#cbd5e1",
+  marginTop: 4,
+};
+
+const logsStyle: React.CSSProperties = {
+  marginTop: 20,
+  padding: 12,
+  background: "#020617",
+  borderRadius: 12,
+  border: "1px solid #334155",
+  maxHeight: 120,
+  overflow: "auto",
+  fontSize: 12,
+  color: "#94a3b8",
+};
+
+const historyPanelStyle: React.CSSProperties = {
+  marginTop: 24,
+  background: "rgba(17,24,39,0.9)",
+  borderRadius: 18,
+  padding: 18,
+  border: "1px solid rgba(148,163,184,0.25)",
+};
+
+const historyHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  marginBottom: 12,
+};
+
+const historyItemStyle: React.CSSProperties = {
+  padding: 12,
+  borderRadius: 12,
+  background: "#1e293b",
+  fontSize: 12,
+};
+
+const footerStyle: React.CSSProperties = {
+  textAlign: "center",
+  marginTop: 32,
+  color: "#64748b",
+  fontSize: 12,
+};
+
+const modalBackdropStyle: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(0,0,0,0.62)",
+  display: "flex",
+  justifyContent: "center",
+  alignItems: "center",
+};
+
+const modalStyle: React.CSSProperties = {
+  background: "#1e293b",
+  padding: 26,
+  borderRadius: 18,
+  width: 480,
+  boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
 };
 
 export default App;
