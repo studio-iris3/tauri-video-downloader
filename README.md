@@ -3,7 +3,13 @@
 Tauri v2 + React + TypeScript + Vite で作成した、Mac / Windows 対応の動画ダウンローダーGUIアプリです。
 
 ## 主な機能
-
+- QuickTime / iPhone 向け H.264 MP4 優先
+- YouTube bot 判定対策
+- Cookie Browser 対応改善
+- 軽量化済み
+- ログ表示ON/OFF
+- GitHub Releases 配布
+- Mac / Windows 両対応
 - 動画情報取得
 - MP4ダウンロード
 - 音声/映像の自動結合
@@ -84,3 +90,21 @@ YouTubeなどでログイン状態が必要な動画では、Cookie Browserを�
 - Auto Updater
 - Mac notarization
 - Windows code signing
+
+## v1.2.0 更新内容
+
+- アプリ軽量化
+- backend log emit 最適化
+- progress update 最適化
+- YouTube bot 判定対策
+- Cookie Browser ガイド改善
+- H.264 MP4 優先化
+- QuickTime 互換性向上
+- ログ表示ON/OFF
+- GitHub Actions build 改善
+
+## 既知の問題
+
+- YouTube側仕様変更により Cookie Browser が必要になる場合があります
+- 一部動画では YouTube bot 判定が発生する場合があります
+- 初回起動時に macOS / Windows のセキュリティ警告が表示される場合があります

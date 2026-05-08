@@ -22,6 +22,11 @@ type DownloadItem = {
   message: string;
 };
 
+type DownloadHistory = {
+  title: string;
+  url: string;
+  date: string;
+};
 const mp4Qualities = [
   { label: "最高画質", value: "best" },
   { label: "1080p", value: "1080" },
@@ -85,6 +90,7 @@ function App() {
   const [cookieBrowser, setCookieBrowser] = useState("none");
   const [concurrentCount, setConcurrentCount] = useState(1);
   const [showHelp, setShowHelp] = useState(false);
+  const [history, setHistory] = useState<DownloadHistory[]>([]);
 
   useEffect(() => {
     itemsRef.current = items;
@@ -92,6 +98,17 @@ function App() {
   useEffect(() => {
   showLogsRef.current = showLogs;
   }, [showLogs]);
+  useEffect(() => {
+  try {
+    const saved = localStorage.getItem("download-history");
+
+    if (saved) {
+      setHistory(JSON.parse(saved));
+    }
+  } catch {
+    // ignore
+  }
+}, []);
 
   useEffect(() => {
   invoke<string>("get_default_download_dir")
@@ -297,6 +314,29 @@ function App() {
     setMessage("情報取得完了");
   }
 
+  function addHistory(title: string, url: string) {
+  const next: DownloadHistory[] = [
+    {
+      title,
+      url,
+      date: new Date().toLocaleString(),
+    },
+    ...history,
+  ].slice(0, 30);
+
+  setHistory(next);
+
+  localStorage.setItem(
+    "download-history",
+    JSON.stringify(next)
+  );
+}
+
+function clearHistory() {
+  setHistory([]);
+  localStorage.removeItem("download-history");
+  setMessage("ダウンロード履歴をクリアしました");
+}
   async function runSingleDownload(id: string) {
     if (cancelledIdsRef.current.has(id)) return;
 
@@ -333,6 +373,10 @@ function App() {
           progress: 100,
           message: result,
         });
+        addHistory(
+  item.title || "タイトル未取得",
+  item.url
+);
       }
     } catch (error) {
       if (cancelledIdsRef.current.has(id)) {
@@ -544,6 +588,88 @@ function App() {
         </div>
       )}
 
+      {history.length > 0 && (
+  <div
+    style={{
+      marginTop: 24,
+      background: "#111827",
+      borderRadius: 14,
+      padding: 16,
+      border: "1px solid #334155",
+    }}
+  >
+    <div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  }}
+>
+  <h3
+    style={{
+      margin: 0,
+    }}
+  >
+    ダウンロード履歴
+  </h3>
+
+  <button
+    onClick={clearHistory}
+    style={buttonStyle("red")}
+  >
+    履歴クリア
+  </button>
+</div>
+
+    <div
+      style={{
+        display: "grid",
+        gap: 8,
+        maxHeight: 180,
+        overflow: "auto",
+      }}
+    >
+      {history.map((entry, index) => (
+        <div
+          key={index}
+          style={{
+            padding: 10,
+            borderRadius: 10,
+            background: "#1e293b",
+            fontSize: 12,
+          }}
+        >
+          <div
+            style={{
+              fontWeight: 700,
+            }}
+          >
+            {entry.title}
+          </div>
+
+          <div
+            style={{
+              color: "#94a3b8",
+              wordBreak: "break-all",
+            }}
+          >
+            {entry.url}
+          </div>
+
+          <div
+            style={{
+              color: "#64748b",
+              marginTop: 4,
+            }}
+          >
+            {entry.date}
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
       <footer style={{ textAlign: "center", marginTop: 32, color: "#64748b", fontSize: 12 }}>
         &copy; 2026 Studio Iris | v{version}
       </footer>
