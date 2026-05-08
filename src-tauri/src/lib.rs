@@ -1,477 +1,387 @@
+use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     io::{BufRead, BufReader},
     path::PathBuf,
     process::{Command, Stdio},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
-
-use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-struct JobState {
-    pids: Mutex<HashMap<String, u32>>,
+#[derive(Clone)]
+struct DownloadState {
+    cancel_flag: Arc<AtomicBool>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct VideoInfo {
     title: String,
-    thumbnail: String,
+    uploader: Option<String>,
+    duration: Option<f64>,
+    thumbnail: Option<String>,
+    webpage_url: Option<String>,
 }
 
-#[derive(Serialize, Clone)]
-struct DownloadProgressPayload {
-    job_id: String,
-    percent: f64,
+#[cfg(unix)]
+fn ensure_executable(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    if let Ok(metadata) = std::fs::metadata(path) {
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        let _ = std::fs::set_permissions(path, permissions);
+    }
 }
 
-fn yt_dlp_path(app: &AppHandle) -> Result<String, String> {
-    #[cfg(all(target_os = "macos", debug_assertions))]
-    {
-        let candidates = ["/usr/local/bin/yt-dlp", "/opt/homebrew/bin/yt-dlp", "yt-dlp"];
+#[cfg(not(unix))]
+fn ensure_executable(_path: &std::path::Path) {}
 
-        for candidate in candidates {
-            let path = PathBuf::from(candidate);
+fn bundled_bin_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("resource_dir の取得に失敗しました: {}", e))?;
 
-            if path.exists() || candidate == "yt-dlp" {
-                return Ok(candidate.to_string());
-            }
+    Ok(resource_dir.join("bin"))
+}
+
+fn find_bundled_binary(app: &AppHandle, names: &[&str]) -> Result<PathBuf, String> {
+    let bin_dir = bundled_bin_dir(app)?;
+
+    for name in names {
+        let candidate = bin_dir.join(name);
+        if candidate.exists() {
+            ensure_executable(&candidate);
+            return Ok(candidate);
         }
     }
 
-    let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+    Err(format!(
+        "同梱バイナリが見つかりませんでした。\n探索先: {}\n候補: {:?}",
+        bin_dir.display(),
+        names
+    ))
+}
 
-    #[cfg(target_os = "macos")]
-    {
-        let candidates = [
-            resource_dir.join("bin").join("yt-dlp"),
-            resource_dir.join("bin").join("yt-dlp-universal-apple-darwin"),
-            resource_dir.join("bin").join("yt-dlp-x86_64-apple-darwin"),
-            resource_dir.join("bin").join("yt-dlp-aarch64-apple-darwin"),
-            resource_dir.join("yt-dlp-universal-apple-darwin"),
-            resource_dir.join("yt-dlp-x86_64-apple-darwin"),
-            resource_dir.join("yt-dlp-aarch64-apple-darwin"),
-        ];
-
-        for path in candidates {
-            if path.exists() {
-                return Ok(path.to_string_lossy().to_string());
-            }
+fn yt_dlp_path(app: &AppHandle) -> Result<PathBuf, String> {
+    if cfg!(debug_assertions) {
+        let local = PathBuf::from("/usr/local/bin/yt-dlp");
+        if local.exists() {
+            return Ok(local);
         }
-
-        return Err(format!(
-            "同梱 yt-dlp が見つかりません。resource_dir: {}",
-            resource_dir.to_string_lossy()
-        ));
     }
 
     #[cfg(target_os = "windows")]
     {
-        let candidates = [
-            resource_dir
-                .join("bin")
-                .join("yt-dlp-x86_64-pc-windows-msvc.exe"),
-            resource_dir.join("yt-dlp-x86_64-pc-windows-msvc.exe"),
-            resource_dir.join("yt-dlp.exe"),
-        ];
-
-        for path in candidates {
-            if path.exists() {
-                return Ok(path.to_string_lossy().to_string());
-            }
-        }
-
-        return Err(format!(
-            "同梱 yt-dlp.exe が見つかりません。resource_dir: {}",
-            resource_dir.to_string_lossy()
-        ));
+        return find_bundled_binary(app, &["yt-dlp-x86_64-pc-windows-msvc.exe"]);
     }
-
-    #[cfg(target_os = "linux")]
-    {
-        Ok("yt-dlp".to_string())
-    }
-}
-
-fn ffmpeg_location(app: &AppHandle) -> Result<String, String> {
-    #[cfg(all(target_os = "macos", debug_assertions))]
-    {
-        return Ok("/usr/local/bin/ffmpeg".to_string());
-    }
-
-    let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
 
     #[cfg(target_os = "macos")]
     {
-        let candidates = [
-            resource_dir.join("bin").join("ffmpeg"),
-            resource_dir.join("ffmpeg-universal-apple-darwin"),
-            resource_dir.join("ffmpeg-x86_64-apple-darwin"),
-            resource_dir.join("ffmpeg-aarch64-apple-darwin"),
-        ];
+        return find_bundled_binary(app, &["yt-dlp-universal-apple-darwin"]);
+    }
 
-        for path in candidates {
-            if path.exists() {
-                return Ok(path.to_string_lossy().to_string());
-            }
+    Err("このOS用の yt-dlp が見つかりませんでした".to_string())
+}
+
+fn ffmpeg_location(app: &AppHandle) -> Result<PathBuf, String> {
+    if cfg!(debug_assertions) {
+        let local = PathBuf::from("/usr/local/bin/ffmpeg");
+        if local.exists() {
+            return Ok(local);
         }
-
-        return Err(format!(
-            "同梱 ffmpeg が見つかりません。resource_dir: {}",
-            resource_dir.to_string_lossy()
-        ));
     }
 
     #[cfg(target_os = "windows")]
     {
-        let candidates = [
-            resource_dir
-                .join("bin")
-                .join("ffmpeg-x86_64-pc-windows-msvc.exe"),
-            resource_dir.join("ffmpeg-x86_64-pc-windows-msvc.exe"),
-            resource_dir.join("ffmpeg.exe"),
-        ];
-
-        for path in candidates {
-            if path.exists() {
-                return Ok(path.to_string_lossy().to_string());
-            }
-        }
-
-        return Err(format!(
-            "同梱 ffmpeg.exe が見つかりません。resource_dir: {}",
-            resource_dir.to_string_lossy()
-        ));
+        return find_bundled_binary(app, &["ffmpeg-x86_64-pc-windows-msvc.exe"]);
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(target_os = "macos")]
     {
-        Ok("ffmpeg".to_string())
+        return find_bundled_binary(app, &["ffmpeg-universal-apple-darwin"]);
+    }
+
+    Err("このOS用の ffmpeg が見つかりませんでした".to_string())
+}
+
+fn ffprobe_location(app: &AppHandle) -> Result<PathBuf, String> {
+    if cfg!(debug_assertions) {
+        let local = PathBuf::from("/usr/local/bin/ffprobe");
+        if local.exists() {
+            return Ok(local);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return find_bundled_binary(app, &["ffprobe-x86_64-pc-windows-msvc.exe"]);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return find_bundled_binary(app, &["ffprobe-universal-apple-darwin"]);
+    }
+
+    Err("このOS用の ffprobe が見つかりませんでした".to_string())
+}
+
+fn default_download_dir() -> Result<String, String> {
+    dirs::download_dir()
+        .ok_or_else(|| "Downloads フォルダを取得できませんでした".to_string())
+        .map(|p| p.to_string_lossy().to_string())
+}
+
+fn add_cookie_browser_arg(command: &mut Command, cookie_browser: Option<String>) {
+    if let Some(browser) = cookie_browser {
+        let browser = browser.trim();
+        if !browser.is_empty() && browser != "none" {
+            command.arg("--cookies-from-browser").arg(browser);
+        }
     }
 }
 
-fn resolve_save_path(save_path: String) -> Result<PathBuf, String> {
-    if !save_path.trim().is_empty() {
-        return Ok(PathBuf::from(save_path));
-    }
-
-    dirs::download_dir().ok_or_else(|| "ダウンロードフォルダを取得できませんでした".to_string())
+fn emit_log(app: &AppHandle, message: impl Into<String>) {
+    let _ = app.emit("download-log", message.into());
 }
 
-fn add_cookie_args(command: &mut Command, cookie_browser: &str) {
-    if cookie_browser != "none" && !cookie_browser.trim().is_empty() {
-        command.args(["--cookies-from-browser", cookie_browser]);
-    }
+fn emit_progress(app: &AppHandle, percent: f64) {
+    let _ = app.emit("download-progress", percent);
 }
 
 #[tauri::command]
 fn get_default_download_dir() -> Result<String, String> {
-    let dir =
-        dirs::download_dir().ok_or_else(|| "ダウンロードフォルダを取得できませんでした".to_string())?;
+    default_download_dir()
+}
 
-    Ok(dir.to_string_lossy().to_string())
+#[tauri::command]
+fn cancel_download(state: State<Mutex<DownloadState>>) -> Result<(), String> {
+    let state = state.lock().map_err(|_| "state lock error".to_string())?;
+    state.cancel_flag.store(true, Ordering::SeqCst);
+    Ok(())
 }
 
 #[tauri::command]
 fn get_video_info(
     app: AppHandle,
     url: String,
-    cookie_browser: String,
+    cookie_browser: Option<String>,
 ) -> Result<VideoInfo, String> {
     let yt_dlp = yt_dlp_path(&app)?;
-    let mut command = Command::new(&yt_dlp);
 
-    command.args(["--dump-json", "--no-playlist"]);
-    command.args(["--extractor-args", "youtube:player_client=default,ios"]);
-    command.arg("--force-ipv4");
+    emit_log(&app, format!("yt-dlp: {}", yt_dlp.display()));
 
-    add_cookie_args(&mut command, &cookie_browser);
-    command.arg(&url);
+    let mut command = Command::new(yt_dlp);
+    command
+        .arg("--dump-json")
+        .arg("--no-playlist")
+        .arg("--force-ipv4")
+        .arg("--extractor-args")
+        .arg("youtube:player_client=default,ios")
+        .arg(&url)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    add_cookie_browser_arg(&mut command, cookie_browser);
 
     let output = command
         .output()
-        .map_err(|e| format!("yt-dlp の実行に失敗しました: {}", e))?;
+        .map_err(|e| format!("動画情報の取得に失敗しました: {}", e))?;
 
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(format!("動画情報の取得に失敗しました:\n{}", stderr));
     }
 
-    let json_text = String::from_utf8_lossy(&output.stdout);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 
-    let json: serde_json::Value =
-        serde_json::from_str(&json_text).map_err(|e| format!("JSON解析エラー: {}", e))?;
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|e| format!("動画情報JSONの解析に失敗しました: {}", e))?;
 
-    let title = json["title"]
-        .as_str()
-        .unwrap_or("タイトル不明")
-        .to_string();
-
-    let thumbnail = json["thumbnail"].as_str().unwrap_or("").to_string();
-
-    Ok(VideoInfo { title, thumbnail })
-}
-
-#[tauri::command]
-fn cancel_download(job_id: String, state: State<JobState>) -> Result<String, String> {
-    let pid = {
-        let mut pids = state
-            .pids
-            .lock()
-            .map_err(|_| "ジョブ管理ロックに失敗しました".to_string())?;
-
-        pids.remove(&job_id)
-    };
-
-    if let Some(pid) = pid {
-        #[cfg(target_os = "windows")]
-        let status = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status();
-
-        #[cfg(not(target_os = "windows"))]
-        let status = Command::new("kill")
-            .arg("-TERM")
-            .arg(pid.to_string())
-            .status();
-
-        let status = status.map_err(|e| format!("キャンセルに失敗しました: {}", e))?;
-
-        if status.success() {
-            Ok("キャンセルしました".to_string())
-        } else {
-            Err("プロセスのキャンセルに失敗しました".to_string())
-        }
-    } else {
-        Ok("対象ジョブは実行中ではありません".to_string())
-    }
+    Ok(VideoInfo {
+        title: value
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown Title")
+            .to_string(),
+        uploader: value
+            .get("uploader")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        duration: value.get("duration").and_then(|v| v.as_f64()),
+        thumbnail: value
+            .get("thumbnail")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        webpage_url: value
+            .get("webpage_url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+    })
 }
 
 #[tauri::command]
 fn download_video(
     app: AppHandle,
-    state: State<JobState>,
-    job_id: String,
+    state: State<Mutex<DownloadState>>,
     url: String,
-    save_path: String,
-    format_type: String,
-    mp4_quality: String,
-    mp3_quality: String,
-    cookie_browser: String,
+    save_dir: Option<String>,
+    format_id: Option<String>,
+    cookie_browser: Option<String>,
 ) -> Result<String, String> {
-    let save_dir = resolve_save_path(save_path)?;
-    let save_dir_text = save_dir.to_string_lossy().to_string();
-
-    let quality_label = if format_type == "mp3" {
-        mp3_quality.clone()
-    } else if mp4_quality == "best" {
-        "best".to_string()
-    } else {
-        format!("{}p", mp4_quality)
-    };
-
-    let output_template = format!("{}/%(title)s_{}.%(ext)s", save_dir_text, quality_label);
+    {
+        let state = state.lock().map_err(|_| "state lock error".to_string())?;
+        state.cancel_flag.store(false, Ordering::SeqCst);
+    }
 
     let yt_dlp = yt_dlp_path(&app)?;
-    let ffmpeg_path = ffmpeg_location(&app)?;
+    let ffmpeg = ffmpeg_location(&app)?;
+    let _ffprobe = ffprobe_location(&app).ok();
 
-    let mut command = Command::new(&yt_dlp);
+    let output_dir = match save_dir {
+        Some(dir) if !dir.trim().is_empty() => PathBuf::from(dir),
+        _ => PathBuf::from(default_download_dir()?),
+    };
 
-    command.args(["--ffmpeg-location", &ffmpeg_path]);
-    command.args(["--extractor-args", "youtube:player_client=default,ios"]);
-    command.arg("--force-ipv4");
-    command.args(["-o", &output_template]);
-    command.arg("--newline");
-    command.arg("--no-playlist");
-    command.arg("--prefer-ffmpeg");
+    std::fs::create_dir_all(&output_dir)
+        .map_err(|e| format!("保存先フォルダを作成できませんでした: {}", e))?;
 
-    add_cookie_args(&mut command, &cookie_browser);
+    emit_log(&app, format!("保存先: {}", output_dir.display()));
+    emit_log(&app, format!("yt-dlp: {}", yt_dlp.display()));
+    emit_log(&app, format!("ffmpeg: {}", ffmpeg.display()));
 
-    if format_type == "mp3" {
-        command.args([
-            "-f",
-            "bestaudio/best",
-            "-x",
-            "--audio-format",
-            "mp3",
-            "--audio-quality",
-            &mp3_quality,
-        ]);
+    let output_template = output_dir.join("%(title).200B.%(ext)s");
 
-        let _ = app.emit(
-            "download-log",
-            format!(
-                "[{}] MP3で保存します / 保存先: {} / 音質: {} / yt-dlp: {} / ffmpeg: {}",
-                job_id, save_dir_text, mp3_quality, yt_dlp, ffmpeg_path
-            ),
-        );
-    } else {
-        let format_selector = match mp4_quality.as_str() {
-            "1080" => "bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[ext=mp4][height<=1080]",
-            "720" => "bv*[ext=mp4][height<=720]+ba[ext=m4a]/b[ext=mp4][height<=720]",
-            "480" => "bv*[ext=mp4][height<=480]+ba[ext=m4a]/b[ext=mp4][height<=480]",
-            _ => "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
-        };
+    let mut command = Command::new(yt_dlp);
 
-        command.args([
-            "-f",
-            format_selector,
-            "--merge-output-format",
-            "mp4",
-            "--remux-video",
-            "mp4",
-        ]);
+    command
+        .arg("--newline")
+        .arg("--progress")
+        .arg("--no-playlist")
+        .arg("--force-ipv4")
+        .arg("--extractor-args")
+        .arg("youtube:player_client=default,ios")
+        .arg("--ffmpeg-location")
+        .arg(ffmpeg)
+        .arg("--merge-output-format")
+        .arg("mp4")
+        .arg("-o")
+        .arg(output_template);
 
-        let _ = app.emit(
-            "download-log",
-            format!(
-                "[{}] MP4で保存します / 保存先: {} / 画質: {} / yt-dlp: {} / ffmpeg: {}",
-                job_id, save_dir_text, quality_label, yt_dlp, ffmpeg_path
-            ),
-        );
-    }
-
-    if cookie_browser != "none" {
-        let _ = app.emit(
-            "download-log",
-            format!("[{}] Cookie取得元: {}", job_id, cookie_browser),
-        );
-    }
-
-    command.arg(&url);
-
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
-
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("yt-dlp の起動に失敗しました: {}", e))?;
-
-    let pid = child.id();
-
-    {
-        let mut pids = state
-            .pids
-            .lock()
-            .map_err(|_| "ジョブ管理ロックに失敗しました".to_string())?;
-
-        pids.insert(job_id.clone(), pid);
-    }
-
-    let app_for_stderr = app.clone();
-    let job_id_for_stderr = job_id.clone();
-
-    let stderr_handle = child.stderr.take().map(|stderr| {
-        thread::spawn(move || {
-            let reader = BufReader::new(stderr);
-
-            for line in reader.lines() {
-                let line = line.unwrap_or_default();
-
-                if !line.trim().is_empty() {
-                    let _ = app_for_stderr.emit(
-                        "download-log",
-                        format!("[{}] {}", job_id_for_stderr, line),
-                    );
-                }
-            }
-        })
-    });
-
-    let mut last_emit = Instant::now() - Duration::from_secs(1);
-    let mut last_percent = -1.0;
-
-    if let Some(stdout) = child.stdout.take() {
-        let reader = BufReader::new(stdout);
-
-        for line in reader.lines() {
-            let line = line.unwrap_or_default();
-
-            if let Some(percent) = extract_percent(&line) {
-                let should_emit =
-                    (percent - last_percent).abs() >= 0.5
-                        || last_emit.elapsed() >= Duration::from_millis(300);
-
-                if should_emit {
-                    let _ = app.emit(
-                        "download-progress",
-                        DownloadProgressPayload {
-                            job_id: job_id.clone(),
-                            percent,
-                        },
-                    );
-
-                    last_percent = percent;
-                    last_emit = Instant::now();
-                }
-            }
-
-            if !line.trim().is_empty() {
-                let _ = app.emit("download-log", format!("[{}] {}", job_id, line));
-            }
+    match format_id {
+        Some(fmt) if !fmt.trim().is_empty() => {
+            command.arg("-f").arg(fmt);
+        }
+        _ => {
+            command
+                .arg("-f")
+                .arg("bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best");
         }
     }
 
-    let status = child
-        .wait()
-        .map_err(|e| format!("yt-dlp の終了待機に失敗しました: {}", e))?;
+    add_cookie_browser_arg(&mut command, cookie_browser);
 
-    if let Some(handle) = stderr_handle {
-        let _ = handle.join();
+    command
+        .arg(&url)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("yt-dlp の実行に失敗しました: {}", e))?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    if let Some(stdout) = stdout {
+        let app_clone = app.clone();
+
+        thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+
+            for line in reader.lines().flatten() {
+                emit_log(&app_clone, line.clone());
+
+                if let Some(percent) = parse_progress_percent(&line) {
+                    emit_progress(&app_clone, percent);
+                }
+            }
+        });
     }
 
-    {
-        let mut pids = state
-            .pids
-            .lock()
-            .map_err(|_| "ジョブ管理ロックに失敗しました".to_string())?;
+    if let Some(stderr) = stderr {
+        let app_clone = app.clone();
 
-        pids.remove(&job_id);
+        thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+
+            for line in reader.lines().flatten() {
+                emit_log(&app_clone, line);
+            }
+        });
     }
 
-    if status.success() {
-        let _ = app.emit(
-            "download-progress",
-            DownloadProgressPayload {
-                job_id: job_id.clone(),
-                percent: 100.0,
-            },
-        );
+    loop {
+        {
+            let state = state.lock().map_err(|_| "state lock error".to_string())?;
+            if state.cancel_flag.load(Ordering::SeqCst) {
+                let _ = child.kill();
+                emit_log(&app, "ダウンロードを停止しました");
+                return Err("ダウンロードを停止しました".to_string());
+            }
+        }
 
-        let _ = app.emit("download-log", format!("[{}] ダウンロード完了", job_id));
-
-        Ok(format!("ダウンロード完了: {}", save_dir_text))
-    } else {
-        Err("ダウンロードまたは結合に失敗しました。ログを確認してください。".to_string())
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if status.success() {
+                    emit_progress(&app, 100.0);
+                    emit_log(&app, "ダウンロード完了");
+                    return Ok("ダウンロード完了".to_string());
+                } else {
+                    return Err(format!("ダウンロードに失敗しました: {}", status));
+                }
+            }
+            Ok(None) => {
+                thread::sleep(Duration::from_millis(300));
+            }
+            Err(e) => {
+                return Err(format!("プロセス監視に失敗しました: {}", e));
+            }
+        }
     }
 }
 
-fn extract_percent(line: &str) -> Option<f64> {
+fn parse_progress_percent(line: &str) -> Option<f64> {
+    if !line.contains("[download]") || !line.contains('%') {
+        return None;
+    }
+
     let percent_pos = line.find('%')?;
-    let before = &line[..percent_pos];
+    let before_percent = &line[..percent_pos];
 
-    let number = before
-        .split_whitespace()
-        .last()?
-        .replace('%', "")
-        .trim()
-        .to_string();
+    let number_start = before_percent
+        .rfind(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .map(|i| i + 1)
+        .unwrap_or(0);
 
-    number.parse::<f64>().ok()
+    before_percent[number_start..].parse::<f64>().ok()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(JobState {
-            pids: Mutex::new(HashMap::new()),
-        })
+        .manage(Mutex::new(DownloadState {
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+        }))
         .invoke_handler(tauri::generate_handler![
             get_default_download_dir,
+            get_video_info,
             download_video,
-            cancel_download,
-            get_video_info
+            cancel_download
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
