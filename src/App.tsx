@@ -9,6 +9,13 @@ import { listen } from "@tauri-apps/api/event";
 import { version } from "../package.json";
 import { friendlyError } from "./downloader";
 
+import {
+  clearSavedHistory,
+  loadHistory,
+  saveHistory,
+  type DownloadHistory,
+} from "./history";
+
 type FormatType = "mp4" | "mp3";
 type ItemStatus = "待機中" | "情報取得中" | "ダウンロード中" | "完了" | "エラー" | "キャンセル済み";
 
@@ -28,11 +35,7 @@ type DownloadItem = {
   message: string;
 };
 
-type DownloadHistory = {
-  title: string;
-  url: string;
-  date: string;
-};
+
 const mp4Qualities = [
   { label: "最高画質", value: "best" },
   { label: "1080p", value: "1080" },
@@ -364,11 +367,7 @@ function App() {
   }, [showLogs]);
   useEffect(() => {
   try {
-    const saved = localStorage.getItem("download-history");
-
-    if (saved) {
-      setHistory(JSON.parse(saved));
-    }
+    setHistory(loadHistory());
   } catch {
     // ignore
   }
@@ -590,15 +589,12 @@ function App() {
 
   setHistory(next);
 
-  localStorage.setItem(
-    "download-history",
-    JSON.stringify(next)
-  );
+  saveHistory(next);
 }
 
 function clearHistory() {
   setHistory([]);
-  localStorage.removeItem("download-history");
+  clearSavedHistory();
   setMessage("ダウンロード履歴をクリアしました");
 }
   async function runSingleDownload(id: string) {
