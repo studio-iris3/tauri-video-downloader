@@ -691,7 +691,36 @@ function App() {
               <li>URLを1行ずつ入力して「追加」</li>
               <li>MP4/MP3、画質・音質は個別・一括設定可能</li>
               <li>Bot判定対策のため、情報取得とDLは控えめな同時実行にしています</li>
-              <li>Cookie Browserはログイン済みブラウザを選んでください</li>
+              <li>
+  Cookie Browser はログイン済みブラウザを選んでください
+  <ul style={{ marginTop: 8 }}>
+    <li>
+      <strong>none</strong> :
+      通常はこちらがおすすめです
+    </li>
+
+    <li>
+      <strong>chrome</strong> :
+      YouTubeログイン状態を利用します。
+      Chrome終了が必要な場合があります
+    </li>
+
+    <li>
+      <strong>safari</strong> :
+      Macで安定しやすいです
+    </li>
+
+    <li>
+      <strong>firefox</strong> :
+      bot対策回避に有効な場合があります
+    </li>
+
+    <li>
+      <strong>brave / edge</strong> :
+      Chrome系ブラウザとして利用可能です
+    </li>
+  </ul>
+</li>
               <li>保存先未指定時はダウンロードフォルダに自動保存</li>
               <li>QuickTime互換のためH.264 MP4を優先します</li>
             </ul>
