@@ -72,6 +72,9 @@ function App() {
   const [items, setItems] = useState<DownloadItem[]>([]);
   const itemsRef = useRef<DownloadItem[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
+  const [showLogs, setShowLogs] = useState(false);
+  const showLogsRef = useRef(false);
+  const progressRef = useRef<Record<string, number>>({});
   const [message, setMessage] = useState("");
   const [isDownloading, setIsDownloading] = useState(false);
   const cancelledIdsRef = useRef<Set<string>>(new Set());
@@ -86,54 +89,106 @@ function App() {
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
+  useEffect(() => {
+  showLogsRef.current = showLogs;
+  }, [showLogs]);
 
   useEffect(() => {
-    invoke<string>("get_default_download_dir")
-      .then((dir) => {
-        setSavePath((current) => (current.trim() ? current : dir));
-      })
-      .catch(() => {
-        setLogs((prev) => [...prev.slice(-50), "デフォルトのダウンロードフォルダを取得できませんでした"]);
-      });
+  invoke<string>("get_default_download_dir")
+    .then((dir) => {
+      setSavePath((current) => (current.trim() ? current : dir));
+    })
+    .catch(() => {
+      if (showLogsRef.current) {
+        setLogs((prev) => [
+          ...prev.slice(-30),
+          "デフォルトのダウンロードフォルダを取得できませんでした",
+        ]);
+      }
+    });
 
-    let lastProgressUpdate = 0;
+  let lastProgressUpdate = 0;
 
-    const unlistenProgress = listen<DownloadProgressPayload>("download-progress", (event) => {
+  const unlistenProgress = listen<DownloadProgressPayload>(
+    "download-progress",
+    (event) => {
       const now = Date.now();
 
-      if (now - lastProgressUpdate < 250) return;
+      if (now - lastProgressUpdate < 1000) return;
       lastProgressUpdate = now;
 
       const { job_id, percent } = event.payload;
-      const widthPercent = Math.min(100, Math.max(0, percent));
+
+      const widthPercent = Math.min(
+        100,
+        Math.max(0, percent)
+      );
+
+      const roundedPercent = Math.round(widthPercent);
+
+      const previousPercent =
+        progressRef.current[job_id] ?? 0;
+
+      if (
+        Math.abs(
+          roundedPercent - previousPercent
+        ) < 1 &&
+        roundedPercent !== 100
+      ) {
+        return;
+      }
+
+      progressRef.current[job_id] =
+        roundedPercent;
 
       setItems((prev) =>
         prev.map((item) =>
-          item.id === job_id
+          item.id === job_id &&
+          Math.round(item.progress) !==
+            roundedPercent
             ? {
                 ...item,
-                progress: widthPercent,
+                progress: roundedPercent,
               }
-            : item,
-        ),
+            : item
+        )
       );
-    });
+    }
+  );
 
-    const unlistenLog = listen<string>("download-log", (event) => {
+  const unlistenLog = listen<string>(
+    "download-log",
+    (event) => {
+      if (!showLogsRef.current) {
+        return;
+      }
+
       setLogs((prev) => {
-        if (prev[prev.length - 1] === event.payload) {
+        if (
+          prev[prev.length - 1] ===
+          event.payload
+        ) {
           return prev;
         }
 
-        return [...prev.slice(-50), event.payload];
+        return [
+          ...prev.slice(-30),
+          event.payload,
+        ];
       });
-    });
+    }
+  );
 
-    return () => {
-      unlistenProgress.then((unlisten) => unlisten());
-      unlistenLog.then((unlisten) => unlisten());
-    };
-  }, []);
+  return () => {
+    unlistenProgress.then((unlisten) =>
+      unlisten()
+    );
+
+    unlistenLog.then((unlisten) =>
+      unlisten()
+    );
+  };
+}, []);
 
   async function chooseFolder() {
     const input = window.prompt("保存先フォルダのフルパスを入力してください", savePath);
@@ -395,6 +450,20 @@ function App() {
 
         <button onClick={applyBulkSettings} style={buttonStyle("blue")}>一括適用</button>
         <button onClick={getInfoAll} style={buttonStyle("orange")}>全URL情報取得</button>
+        <button
+  onClick={() => {
+    setShowLogs((prev) => {
+      const next = !prev;
+      if (!next) {
+        setLogs([]);
+      }
+      return next;
+    });
+  }}
+  style={buttonStyle("gray")}
+>
+          {showLogs ? "ログを隠す" : `ログ表示${logs.length ? ` (${logs.length})` : ""}`}
+        </button>
       </div>
 
       <div style={{ marginBottom: 12, padding: 12, borderRadius: 14, background: "#1e293b", border: "1px solid #334155", color: "#cbd5e1", fontSize: 13 }}>
@@ -422,7 +491,7 @@ function App() {
         {items.map((item) => (
           <div key={item.id} style={{ display: "flex", gap: 12, padding: 12, background: "#1e293b", borderRadius: 16, boxShadow: "0 6px 20px rgba(0,0,0,0.3)" }}>
             <div style={{ width: 140, height: 80, background: "#020617", borderRadius: 12, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontSize: 12 }}>
-              {item.thumbnail ? <img src={item.thumbnail} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "No Image"}
+              {item.thumbnail ? <img loading="lazy" src={item.thumbnail} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "No Image"}
             </div>
 
             <div style={{ flex: 1 }}>
@@ -469,7 +538,7 @@ function App() {
         ))}
       </div>
 
-      {logs.length > 0 && (
+      {showLogs && logs.length > 0 && (
         <div style={{ marginTop: 20, padding: 12, background: "#020617", borderRadius: 12, border: "1px solid #334155", maxHeight: 120, overflow: "auto", fontSize: 12, color: "#94a3b8" }}>
           {logs.map((log, index) => <div key={index}>{log}</div>)}
         </div>
@@ -490,7 +559,7 @@ function App() {
               <li>Cookie対応：年齢制限・ログイン動画・bot判定対策用</li>
               <li>Cookie Browserはログイン済みブラウザを選んでください</li>
               <li>保存先未指定時はダウンロードフォルダに自動保存</li>
-              <li>プログレスバーで進行状況を確認</li>
+              <li>ログは通常非表示です。必要な時だけ「ログ表示」を押してください</li>
             </ul>
             <button onClick={() => setShowHelp(false)} style={{ marginTop: 12, padding: "6px 14px", borderRadius: 8, background: "linear-gradient(135deg,#7c3aed,#2563eb)", color: "#fff" }}>閉じる</button>
           </div>
