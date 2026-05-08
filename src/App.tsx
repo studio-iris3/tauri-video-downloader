@@ -2,6 +2,7 @@ import React, { memo, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { version } from "../package.json";
 import { friendlyError } from "./downloader";
 import {
@@ -28,6 +29,12 @@ type VideoInfo = {
 type DownloadProgressPayload = {
   job_id: string;
   percent: number;
+};
+
+type ToolVersions = {
+  app: string;
+  yt_dlp: string;
+  ffmpeg: string;
 };
 
 type DownloadItem = {
@@ -217,6 +224,7 @@ function App() {
   const [cookieBrowser, setCookieBrowser] = useState("none");
   const [concurrentCount, setConcurrentCount] = useState(1);
   const [showHelp, setShowHelp] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   const [history, setHistory] = useState<DownloadHistory[]>([]);
 
   useEffect(() => {
@@ -293,17 +301,33 @@ function App() {
   }, []);
 
   async function openLatestRelease() {
-  const url =
-    "https://github.com/studio-iris3/tauri-video-downloader/releases/latest";
+    const url =
+      "https://github.com/studio-iris3/tauri-video-downloader/releases/latest";
 
-  try {
-    await openUrl(url);
-    setMessage("最新版確認ページを開きました。現在のバージョンは v1.2.1 です。");
-  } catch (error) {
-    console.error(error);
-    setMessage("Releaseページを開けませんでした。ブラウザ設定または権限設定を確認してください。");
+    try {
+      await openUrl(url);
+      setMessage(`最新版確認ページを開きました。現在のバージョンは v${version} です。`);
+    } catch (error) {
+      console.error(error);
+      setMessage("Releaseページを開けませんでした。ブラウザ設定または権限設定を確認してください。");
+    }
   }
-}
+
+  async function showToolVersions() {
+    try {
+      const versions = await invoke<ToolVersions>("get_tool_versions");
+
+      setMessage(
+        [
+          `アプリ: ${versions.app}`,
+          `yt-dlp: ${versions.yt_dlp}`,
+          `ffmpeg: ${versions.ffmpeg}`,
+        ].join("\n"),
+      );
+    } catch (error) {
+      setMessage(`バージョン情報を取得できませんでした: ${String(error)}`);
+    }
+  }
 
   async function chooseFolder() {
     const input = window.prompt("保存先フォルダのフルパスを入力してください", savePath);
@@ -319,12 +343,25 @@ function App() {
       .map((line) => line.trim())
       .filter((line) => line.length && /^https?:\/\//i.test(line));
 
+          const existingUrls = new Set(
+      itemsRef.current.map((item) => item.url),
+    );
+
+    const uniqueUrls = urls.filter(
+      (url) => !existingUrls.has(url),
+    );
+
+    if (!uniqueUrls.length) {
+      setMessage("すべて既に追加済みのURLです");
+      return;
+    }
+
     if (!urls.length) {
       setMessage("有効なURLを入力してください");
       return;
     }
 
-    const newItems: DownloadItem[] = urls.map((url) => ({
+    const newItems: DownloadItem[] = uniqueUrls.map((url) => ({
       id: createId(),
       url,
       title: "",
@@ -339,7 +376,33 @@ function App() {
 
     setItems((prev) => [...prev, ...newItems]);
     setUrlText("");
-    setMessage(`${newItems.length}件追加しました`);
+    setMessage(
+  `${newItems.length}件追加しました` +
+    (urls.length !== uniqueUrls.length
+      ? `（${urls.length - uniqueUrls.length}件は重複を除外）`
+      : ""),
+    );
+  }
+  async function pasteFromClipboard() {
+    try {
+      const text = await readText();
+
+      if (!text) {
+        alert("クリップボードが空です");
+        return;
+      }
+
+      setUrlText((prev) => {
+        if (!prev.trim()) {
+          return text;
+        }
+
+        return `${prev}\n${text}`;
+      });
+    } catch (error) {
+      console.error(error);
+      alert("クリップボードの読み取りに失敗しました");
+    }
   }
 
   function updateItem(id: string, patch: Partial<DownloadItem>) {
@@ -600,7 +663,8 @@ function App() {
 
         <button onClick={applyBulkSettings} style={buttonStyle("blue")}>一括適用</button>
         <button onClick={getInfoAll} style={buttonStyle("orange")}>全URL情報取得</button>
-        <button onClick={openLatestRelease} style={buttonStyle("green")}>アップデート確認</button>
+
+
         <button
           onClick={() => {
             setShowLogs((prev) => {
@@ -621,55 +685,76 @@ function App() {
         <button onClick={chooseFolder} style={smallButtonStyle}>選択</button>
       </div>
 
-      <div style={inputPanelStyle}>
-        <textarea
-          value={urlText}
-          onChange={(event) => setUrlText(event.target.value)}
-          placeholder="URLを1行ずつ"
-          style={textareaStyle}
-        />
+            <div style={mainWorkAreaStyle}>
+        <div style={leftWorkColumnStyle}>
+          <textarea
+            value={urlText}
+            onChange={(event) => setUrlText(event.target.value)}
+            placeholder="URLを1行ずつ"
+            style={textareaStyle}
+          />
+
+          {message && <div style={messageStyle}>{message}</div>}
+
+          <div style={{ display: "grid", gap: 12 }}>
+            {items.map((item) => (
+              <DownloadCard
+                key={item.id}
+                item={item}
+                updateItem={updateItem}
+                getInfoForItem={getInfoForItem}
+                retryItem={retryItem}
+                cancelItem={cancelItem}
+                removeItem={removeItem}
+              />
+            ))}
+          </div>
+        </div>
 
         <div style={sideButtonColumnStyle}>
-          <button onClick={addUrls} style={buttonStyle("blue")}>追加</button>
-          <button onClick={clearItems} style={buttonStyle("red")}>クリア</button>
+          <button onClick={pasteFromClipboard} style={buttonStyle("gray")}>
+            貼り付け
+          </button>
+
+          <button onClick={addUrls} style={buttonStyle("blue")}>
+            追加
+          </button>
+
+          <button onClick={clearItems} style={buttonStyle("red")}>
+            クリア
+          </button>
+
           <button onClick={downloadAll} style={buttonStyle("purple")}>
             {isDownloading ? "実行中..." : "ダウンロード"}
           </button>
+
           <button onClick={() => setShowHelp(true)} style={buttonStyle("gray")}>
-  ？ヘルプ
-</button>
+            ？ヘルプ
+          </button>
 
-<div
-  style={{
-    fontSize: 12,
-    color: "rgba(255, 255, 255, 0.72)",
-    textAlign: "center",
-    lineHeight: 1.4,
-  }}
->
-  現在のバージョン: v1.2.1
-</div>
+          <div
+            style={{
+              fontSize: 12,
+              color: "rgba(255, 255, 255, 0.72)",
+              textAlign: "center",
+              lineHeight: 1.4,
+            }}
+          >
+            現在のバージョン: v{version}
+          </div>
 
-<button onClick={openLatestRelease} style={buttonStyle("gray")}>
-  最新版を確認
-</button>
+          <button onClick={openLatestRelease} style={buttonStyle("gray")}>
+            最新版を確認
+          </button>
+
+          <button onClick={showToolVersions} style={buttonStyle("gray")}>
+            バージョン情報
+          </button>
+
+          <button onClick={() => setShowAbout(true)} style={buttonStyle("gray")}>
+            About
+          </button>
         </div>
-      </div>
-
-      {message && <div style={messageStyle}>{message}</div>}
-
-      <div style={{ display: "grid", gap: 12 }}>
-        {items.map((item) => (
-          <DownloadCard
-            key={item.id}
-            item={item}
-            updateItem={updateItem}
-            getInfoForItem={getInfoForItem}
-            retryItem={retryItem}
-            cancelItem={cancelItem}
-            removeItem={removeItem}
-          />
-        ))}
       </div>
 
       {showLogs && logs.length > 0 && (
@@ -709,38 +794,39 @@ function App() {
             <h2 style={{ marginTop: 0 }}>使い方</h2>
             <ul style={{ paddingLeft: 20, lineHeight: 1.7 }}>
               <li>URLを1行ずつ入力して「追加」</li>
+              <li>「貼り付け」でクリップボード内のURLを自動入力できます</li>
               <li>MP4/MP3、画質・音質は個別・一括設定可能</li>
               <li>Bot判定対策のため、情報取得とDLは控えめな同時実行にしています</li>
               <li>
-  Cookie Browser はログイン済みブラウザを選んでください
-  <ul style={{ marginTop: 8 }}>
-    <li>
-      <strong>none</strong> :
-      通常はこちらがおすすめです
-    </li>
+                Cookie Browser はログイン済みブラウザを選んでください
+                <ul style={{ marginTop: 8 }}>
+                  <li>
+                    <strong>none</strong> :
+                    通常はこちらがおすすめです
+                  </li>
 
-    <li>
-      <strong>chrome</strong> :
-      YouTubeログイン状態を利用します。
-      Chrome終了が必要な場合があります
-    </li>
+                  <li>
+                    <strong>chrome</strong> :
+                    YouTubeログイン状態を利用します。
+                    Chrome終了が必要な場合があります
+                  </li>
 
-    <li>
-      <strong>safari</strong> :
-      Macで安定しやすいです
-    </li>
+                  <li>
+                    <strong>safari</strong> :
+                    Macで安定しやすいです
+                  </li>
 
-    <li>
-      <strong>firefox</strong> :
-      bot対策回避に有効な場合があります
-    </li>
+                  <li>
+                    <strong>firefox</strong> :
+                    bot対策回避に有効な場合があります
+                  </li>
 
-    <li>
-      <strong>brave / edge</strong> :
-      Chrome系ブラウザとして利用可能です
-    </li>
-  </ul>
-</li>
+                  <li>
+                    <strong>brave / edge</strong> :
+                    Chrome系ブラウザとして利用可能です
+                  </li>
+                </ul>
+              </li>
               <li>保存先未指定時はダウンロードフォルダに自動保存</li>
               <li>QuickTime互換のためH.264 MP4を優先します</li>
             </ul>
@@ -748,6 +834,65 @@ function App() {
           </div>
         </div>
       )}
+      {showAbout && (
+        <div style={modalBackdropStyle}>
+          <div style={modalStyle}>
+            <h2 style={{ marginTop: 0 }}>About</h2>
+
+            <div style={{ lineHeight: 1.8, color: "#cbd5e1" }}>
+              <div>
+                <strong>Studio Iris Video Downloader</strong>
+              </div>
+
+              <div>Version: v{version}</div>
+              <div>License: Private / Studio Iris</div>
+              <div>© 2026 Studio Iris. All Rights Reserved.</div>
+
+              <div>Build Target: macOS / Windows</div>
+              <div>Framework: Tauri v2 Desktop App</div>
+
+              <hr style={{ borderColor: "rgba(148,163,184,0.25)", margin: "16px 0" }} />
+
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>GitHub</div>
+              <button
+                onClick={() =>
+                 openUrl("https://github.com/studio-iris3/tauri-video-downloader")
+                }
+               style={{
+                border: "none",
+                background: "transparent",
+                color: "#60a5fa",
+                cursor: "pointer",
+                padding: 0,
+                textAlign: "left",
+                wordBreak: "break-all",
+                fontSize: 14,
+               }}
+              >
+                https://github.com/studio-iris3/tauri-video-downloader
+              </button>
+
+              <hr style={{ borderColor: "rgba(148,163,184,0.25)", margin: "16px 0" }} />
+
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>使用ライブラリ</div>
+              <ul style={{ paddingLeft: 20, marginTop: 0 }}>
+                <li>Tauri v2</li>
+                <li>React</li>
+                <li>TypeScript</li>
+                <li>Vite</li>
+                <li>Rust</li>
+                <li>yt-dlp</li>
+                <li>FFmpeg</li>
+              </ul>
+            </div>
+
+            <button onClick={() => setShowAbout(false)} style={buttonStyle("purple")}>
+              閉じる
+            </button>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -764,7 +909,7 @@ const titleStyle: React.CSSProperties = {
   fontSize: 28,
   fontWeight: 900,
   letterSpacing: "-0.04em",
-  marginBottom: 56,
+  marginBottom: 18,
   textAlign: "left",
 };
 
@@ -823,23 +968,37 @@ const savePanelStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 16,
-  marginBottom: 20,
-  padding: "20px 24px",
+  marginBottom: 16,
+  padding: "18px 24px",
   borderRadius: 18,
   background: "rgba(30,41,59,0.82)",
   border: "1px solid rgba(148,163,184,0.25)",
   fontSize: 18,
 };
 
+const mainWorkAreaStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 16,
+  alignItems: "flex-start",
+  marginBottom: 20,
+};
+
+const leftWorkColumnStyle: React.CSSProperties = {
+  flex: 1,
+  display: "grid",
+  gap: 12,
+};
+
 const inputPanelStyle: React.CSSProperties = {
   display: "flex",
   gap: 16,
-  marginBottom: 20,
+  marginBottom: 14,
+  alignItems: "stretch",
 };
 
 const textareaStyle: React.CSSProperties = {
   flex: 1,
-  height: 160,
+  height: 105,
   padding: 20,
   borderRadius: 18,
   background: "rgba(30,41,59,0.82)",
@@ -853,7 +1012,9 @@ const textareaStyle: React.CSSProperties = {
 const sideButtonColumnStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  gap: 10,
+  gap: 8,
+  width: 150,
+  flexShrink: 0,
 };
 
 const buttonStyle = (
@@ -869,9 +1030,9 @@ const buttonStyle = (
   };
 
   return {
-    minHeight: 40,
-    padding: "0 14px",
-    fontSize: 13,
+    minHeight: 34,
+    padding: "0 12px",
+    fontSize: 12,
     whiteSpace: "nowrap",
     border: "none",
     background: map[color],
@@ -894,12 +1055,13 @@ const smallButtonStyle: React.CSSProperties = {
 };
 
 const messageStyle: React.CSSProperties = {
-  marginBottom: 16,
+  marginBottom: 12,
   padding: 14,
   borderRadius: 14,
   background: "rgba(15,23,42,0.9)",
   border: "1px solid rgba(148,163,184,0.25)",
   color: "#cbd5e1",
+  whiteSpace: "pre-wrap",
 };
 
 const cardStyle: React.CSSProperties = {

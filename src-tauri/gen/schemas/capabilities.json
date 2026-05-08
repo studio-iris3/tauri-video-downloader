@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default permissions","local":true,"windows":["main"],"permissions":["core:default","core:event:default","core:window:default","opener:default"]}}
+{"default":{"identifier":"default","description":"Default permissions","local":true,"windows":["main"],"permissions":["core:default","core:event:default","core:window:default","opener:default","clipboard-manager:allow-read-text"]}}

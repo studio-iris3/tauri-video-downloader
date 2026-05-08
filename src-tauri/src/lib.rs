@@ -30,6 +30,12 @@ struct ProgressPayload {
     job_id: String,
     percent: f64,
 }
+#[derive(Debug, Serialize)]
+struct ToolVersions {
+    app: String,
+    yt_dlp: String,
+    ffmpeg: String,
+}
 
 fn default_download_dir() -> Result<String, String> {
     dirs::download_dir()
@@ -131,6 +137,36 @@ fn get_default_download_dir() -> Result<String, String> {
 }
 
 #[tauri::command]
+fn get_tool_versions(app: AppHandle) -> Result<ToolVersions, String> {
+    let yt_dlp = yt_dlp_path(&app)?;
+    let ffmpeg = ffmpeg_location(&app)?;
+
+    let yt_dlp_version = Command::new(&yt_dlp)
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("yt-dlp のバージョン取得に失敗しました: {}", e))
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())?;
+
+    let ffmpeg_version = Command::new(&ffmpeg)
+        .arg("-version")
+        .output()
+        .map_err(|e| format!("ffmpeg のバージョン取得に失敗しました: {}", e))
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .unwrap_or("不明")
+                .to_string()
+        })?;
+
+    Ok(ToolVersions {
+        app: "v1.2.1".to_string(),
+        yt_dlp: yt_dlp_version,
+        ffmpeg: ffmpeg_version,
+    })
+}
+
+#[tauri::command]
 fn cancel_download(state: State<DownloadState>, job_id: String) -> Result<(), String> {
     let mut cancelled = state
         .cancelled_jobs
@@ -170,7 +206,10 @@ fn get_video_info(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        return Err(friendly_error(format!("動画情報の取得に失敗しました:\n{}", stderr)));
+        return Err(friendly_error(format!(
+            "動画情報の取得に失敗しました:\n{}",
+            stderr
+        )));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -351,7 +390,8 @@ fn download_video(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-    .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(DownloadState {
             cancelled_jobs: Arc::new(Mutex::new(HashSet::new())),
         })
@@ -359,7 +399,8 @@ pub fn run() {
             get_default_download_dir,
             get_video_info,
             download_video,
-            cancel_download
+            cancel_download,
+            get_tool_versions
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
