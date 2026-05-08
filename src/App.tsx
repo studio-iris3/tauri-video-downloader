@@ -48,6 +48,24 @@ function createId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function friendlyError(error: unknown) {
+  const text = String(error);
+
+  if (
+    text.includes("Sign in to confirm") ||
+    text.includes("not a bot") ||
+    text.includes("--cookies-from-browser")
+  ) {
+    return "YouTubeのbot判定が出ています。Cookie BrowserをChrome/Safari/Firefoxなどログイン済みブラウザに変更して再試行してください。";
+  }
+
+  return text;
+}
+
 function App() {
   const [urlText, setUrlText] = useState("");
   const [savePath, setSavePath] = useState("");
@@ -62,7 +80,7 @@ function App() {
   const [bulkMp4Quality, setBulkMp4Quality] = useState("1080");
   const [bulkMp3Quality, setBulkMp3Quality] = useState("192K");
   const [cookieBrowser, setCookieBrowser] = useState("none");
-  const [concurrentCount, setConcurrentCount] = useState(3);
+  const [concurrentCount, setConcurrentCount] = useState(1);
   const [showHelp, setShowHelp] = useState(false);
 
   useEffect(() => {
@@ -75,15 +93,16 @@ function App() {
         setSavePath((current) => (current.trim() ? current : dir));
       })
       .catch(() => {
-        setLogs((prev) => [...prev.slice(-80), "デフォルトのダウンロードフォルダを取得できませんでした"]);
+        setLogs((prev) => [...prev.slice(-50), "デフォルトのダウンロードフォルダを取得できませんでした"]);
       });
 
-    let lastUpdate = 0;
+    let lastProgressUpdate = 0;
 
     const unlistenProgress = listen<DownloadProgressPayload>("download-progress", (event) => {
       const now = Date.now();
-      if (now - lastUpdate < 100) return;
-      lastUpdate = now;
+
+      if (now - lastProgressUpdate < 250) return;
+      lastProgressUpdate = now;
 
       const { job_id, percent } = event.payload;
       const widthPercent = Math.min(100, Math.max(0, percent));
@@ -101,7 +120,13 @@ function App() {
     });
 
     const unlistenLog = listen<string>("download-log", (event) => {
-      setLogs((prev) => [...prev.slice(-80), event.payload]);
+      setLogs((prev) => {
+        if (prev[prev.length - 1] === event.payload) {
+          return prev;
+        }
+
+        return [...prev.slice(-50), event.payload];
+      });
     });
 
     return () => {
@@ -195,7 +220,7 @@ function App() {
     } catch (error) {
       updateItem(item.id, {
         status: "エラー",
-        message: String(error),
+        message: friendlyError(error),
       });
     }
   }
@@ -206,21 +231,14 @@ function App() {
       return;
     }
 
-    setMessage("情報取得中...");
-    const concurrency = 3;
-    let cursor = 0;
+    setMessage("情報取得中... YouTube対策のため1件ずつ取得します");
 
-    async function worker() {
-      while (cursor < itemsRef.current.length) {
-        const index = cursor;
-        cursor += 1;
-        const item = itemsRef.current[index];
-        if (cancelledIdsRef.current.has(item.id)) continue;
-        await getInfoForItem(item);
-      }
+    for (const item of itemsRef.current) {
+      if (cancelledIdsRef.current.has(item.id)) continue;
+      await getInfoForItem(item);
+      await sleep(1500);
     }
 
-    await Promise.all(Array.from({ length: concurrency }, () => worker()));
     setMessage("情報取得完了");
   }
 
@@ -271,7 +289,7 @@ function App() {
       } else {
         updateItem(id, {
           status: "エラー",
-          message: String(error),
+          message: friendlyError(error),
         });
       }
     }
@@ -284,6 +302,8 @@ function App() {
       progress: 0,
       message: "再試行準備中...",
     });
+
+    await sleep(1000);
     await runSingleDownload(id);
   }
 
@@ -324,7 +344,9 @@ function App() {
       while (cursor < queue.length) {
         const id = queue[cursor];
         cursor += 1;
+
         await runSingleDownload(id);
+        await sleep(1500);
       }
     }
 
@@ -362,7 +384,15 @@ function App() {
           {cookieBrowsers.map((browser) => <option key={browser.value} value={browser.value}>{browser.label}</option>)}
         </select>
 
-        <input type="number" value={concurrentCount} onChange={(event) => setConcurrentCount(Math.max(1, Number(event.target.value)))} style={{ width: 60 }} />
+        <input
+          type="number"
+          min={1}
+          max={2}
+          value={concurrentCount}
+          onChange={(event) => setConcurrentCount(Math.min(2, Math.max(1, Number(event.target.value))))}
+          style={{ width: 60 }}
+        />
+
         <button onClick={applyBulkSettings} style={buttonStyle("blue")}>一括適用</button>
         <button onClick={getInfoAll} style={buttonStyle("orange")}>全URL情報取得</button>
       </div>
@@ -428,7 +458,7 @@ function App() {
               </div>
 
               <div style={{ height: 8, background: "#334155", borderRadius: 6, marginTop: 8, overflow: "hidden" }}>
-                <div style={{ height: "100%", width: `${item.progress}%`, background: "linear-gradient(90deg,#2563eb,#22c55e)", borderRadius: 6, transition: "width 0.25s ease" }} />
+                <div style={{ height: "100%", width: `${item.progress}%`, background: "linear-gradient(90deg,#2563eb,#22c55e)", borderRadius: 6, transition: "width 0.12s linear" }} />
               </div>
 
               <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>{Math.round(item.progress)}%</div>
@@ -440,7 +470,7 @@ function App() {
       </div>
 
       {logs.length > 0 && (
-        <div style={{ marginTop: 20, padding: 12, background: "#020617", borderRadius: 12, border: "1px solid #334155", maxHeight: 180, overflow: "auto", fontSize: 12, color: "#94a3b8" }}>
+        <div style={{ marginTop: 20, padding: 12, background: "#020617", borderRadius: 12, border: "1px solid #334155", maxHeight: 120, overflow: "auto", fontSize: 12, color: "#94a3b8" }}>
           {logs.map((log, index) => <div key={index}>{log}</div>)}
         </div>
       )}
@@ -456,9 +486,9 @@ function App() {
             <ul style={{ paddingLeft: 20 }}>
               <li>URLを1行ずつ入力して「追加」</li>
               <li>MP4/MP3、画質・音質は個別・一括設定可能</li>
-              <li>「全URL情報取得」ボタンで並列情報取得</li>
-              <li>Cookie対応：年齢制限・ログイン動画用</li>
-              <li>同時ダウンロード数を指定可能</li>
+              <li>Bot判定対策のため、情報取得とDLは控えめな同時実行にしています</li>
+              <li>Cookie対応：年齢制限・ログイン動画・bot判定対策用</li>
+              <li>Cookie Browserはログイン済みブラウザを選んでください</li>
               <li>保存先未指定時はダウンロードフォルダに自動保存</li>
               <li>プログレスバーで進行状況を確認</li>
             </ul>
