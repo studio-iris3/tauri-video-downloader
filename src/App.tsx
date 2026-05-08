@@ -293,14 +293,17 @@ function App() {
   }, []);
 
   async function openLatestRelease() {
-    try {
-      await openUrl(
-        "https://github.com/studio-iris3/tauri-video-downloader/releases/latest",
-      );
-    } catch {
-      setMessage("Releaseページを開けませんでした");
-    }
+  const url =
+    "https://github.com/studio-iris3/tauri-video-downloader/releases/latest";
+
+  try {
+    await openUrl(url);
+    setMessage("最新版確認ページを開きました。現在のバージョンは v1.2.1 です。");
+  } catch (error) {
+    console.error(error);
+    setMessage("Releaseページを開けませんでした。ブラウザ設定または権限設定を確認してください。");
   }
+}
 
   async function chooseFolder() {
     const input = window.prompt("保存先フォルダのフルパスを入力してください", savePath);
@@ -632,7 +635,24 @@ function App() {
           <button onClick={downloadAll} style={buttonStyle("purple")}>
             {isDownloading ? "実行中..." : "ダウンロード"}
           </button>
-          <button onClick={() => setShowHelp(true)} style={buttonStyle("gray")}>？ヘルプ</button>
+          <button onClick={() => setShowHelp(true)} style={buttonStyle("gray")}>
+  ？ヘルプ
+</button>
+
+<div
+  style={{
+    fontSize: 12,
+    color: "rgba(255, 255, 255, 0.72)",
+    textAlign: "center",
+    lineHeight: 1.4,
+  }}
+>
+  現在のバージョン: v1.2.1
+</div>
+
+<button onClick={openLatestRelease} style={buttonStyle("gray")}>
+  最新版を確認
+</button>
         </div>
       </div>
 
