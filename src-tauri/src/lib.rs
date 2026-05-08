@@ -1,3 +1,5 @@
+mod paths;
+
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -8,7 +10,9 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
+
+use paths::{ffmpeg_location, yt_dlp_path};
 
 #[derive(Clone)]
 struct DownloadState {
@@ -25,87 +29,6 @@ struct VideoInfo {
 struct ProgressPayload {
     job_id: String,
     percent: f64,
-}
-
-#[cfg(unix)]
-fn ensure_executable(path: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-
-    if let Ok(metadata) = std::fs::metadata(path) {
-        let mut permissions = metadata.permissions();
-        permissions.set_mode(0o755);
-        let _ = std::fs::set_permissions(path, permissions);
-    }
-}
-
-#[cfg(not(unix))]
-fn ensure_executable(_path: &std::path::Path) {}
-
-fn bundled_bin_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| format!("resource_dir の取得に失敗しました: {}", e))?;
-
-    Ok(resource_dir.join("bin"))
-}
-
-fn find_bundled_binary(app: &AppHandle, names: &[&str]) -> Result<PathBuf, String> {
-    let bin_dir = bundled_bin_dir(app)?;
-
-    for name in names {
-        let candidate = bin_dir.join(name);
-        if candidate.exists() {
-            ensure_executable(&candidate);
-            return Ok(candidate);
-        }
-    }
-
-    Err(format!(
-        "同梱バイナリが見つかりませんでした。\n探索先: {}\n候補: {:?}",
-        bin_dir.display(),
-        names
-    ))
-}
-
-fn yt_dlp_path(app: &AppHandle) -> Result<PathBuf, String> {
-    if cfg!(debug_assertions) {
-        let local = PathBuf::from("/usr/local/bin/yt-dlp");
-        if local.exists() {
-            return Ok(local);
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    let names = &["yt-dlp-x86_64-pc-windows-msvc.exe"];
-
-    #[cfg(target_os = "macos")]
-    let names = &["yt-dlp-universal-apple-darwin"];
-
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    return Err("このOS用の yt-dlp が見つかりませんでした".to_string());
-
-    find_bundled_binary(app, names)
-}
-
-fn ffmpeg_location(app: &AppHandle) -> Result<PathBuf, String> {
-    if cfg!(debug_assertions) {
-        let local = PathBuf::from("/usr/local/bin/ffmpeg");
-        if local.exists() {
-            return Ok(local);
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    let names = &["ffmpeg-x86_64-pc-windows-msvc.exe"];
-
-    #[cfg(target_os = "macos")]
-    let names = &["ffmpeg-universal-apple-darwin"];
-
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    return Err("このOS用の ffmpeg が見つかりませんでした".to_string());
-
-    find_bundled_binary(app, names)
 }
 
 fn default_download_dir() -> Result<String, String> {
@@ -172,22 +95,18 @@ fn mp4_format_selector(mp4_quality: &str) -> String {
             "bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]"
                 .to_string()
         }
-
         "1080" => {
             "bestvideo[vcodec^=avc1][height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]"
                 .to_string()
         }
-
         "720" => {
             "bestvideo[vcodec^=avc1][height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]"
                 .to_string()
         }
-
         "480" => {
             "bestvideo[vcodec^=avc1][height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]"
                 .to_string()
         }
-
         _ => {
             "bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]"
                 .to_string()
@@ -234,6 +153,7 @@ fn get_video_info(
 
     command
         .arg("--dump-json")
+        .arg("--skip-download")
         .arg("--no-playlist")
         .arg("--force-ipv4")
         .arg("--extractor-args")
@@ -290,6 +210,7 @@ fn download_video(
             .cancelled_jobs
             .lock()
             .map_err(|_| "cancel state lock error".to_string())?;
+
         cancelled.remove(&job_id);
     }
 
