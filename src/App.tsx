@@ -225,6 +225,7 @@ function App() {
   const [concurrentCount, setConcurrentCount] = useState(1);
   const [showHelp, setShowHelp] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
+  const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   const [history, setHistory] = useState<DownloadHistory[]>([]);
 
   useEffect(() => {
@@ -495,6 +496,27 @@ function App() {
     setMessage("ダウンロード履歴をクリアしました");
   }
 
+  function restoreHistoryUrl(url: string) {
+    setUrlText((prev) => {
+      if (!prev.trim()) {
+        return url;
+      }
+
+      const lines = prev
+        .split(/\r?\n/)
+        .map((line) => line.trim());
+
+      if (lines.includes(url)) {
+        setMessage("既に入力済みのURLです");
+        return prev;
+      }
+
+      return `${prev}\n${url}`;
+    });
+
+    setMessage("履歴からURLを追加しました");
+  }
+
   async function runSingleDownload(id: string) {
     if (cancelledIdsRef.current.has(id)) return;
 
@@ -754,6 +776,9 @@ function App() {
           <button onClick={() => setShowAbout(true)} style={buttonStyle("gray")}>
             About
           </button>
+          <button onClick={() => setShowReleaseNotes(true)} style={buttonStyle("gray")}>
+            Release Notes
+        </button>
         </div>
       </div>
 
@@ -778,6 +803,14 @@ function App() {
                 <div style={{ fontWeight: 800 }}>{entry.title}</div>
                 <div style={{ color: "#94a3b8", wordBreak: "break-all" }}>{entry.url}</div>
                 <div style={{ color: "#64748b", marginTop: 4 }}>{entry.date}</div>
+                <div style={{ marginTop: 8 }}>
+                  <button
+                    onClick={() => restoreHistoryUrl(entry.url)}
+                    style={buttonStyle("blue")}
+                  >
+                    再追加
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -834,7 +867,7 @@ function App() {
           </div>
         </div>
       )}
-      {showAbout && (
+            {showAbout && (
         <div style={modalBackdropStyle}>
           <div style={modalStyle}>
             <h2 style={{ marginTop: 0 }}>About</h2>
@@ -847,7 +880,6 @@ function App() {
               <div>Version: v{version}</div>
               <div>License: Private / Studio Iris</div>
               <div>© 2026 Studio Iris. All Rights Reserved.</div>
-
               <div>Build Target: macOS / Windows</div>
               <div>Framework: Tauri v2 Desktop App</div>
 
@@ -856,18 +888,18 @@ function App() {
               <div style={{ fontWeight: 800, marginBottom: 6 }}>GitHub</div>
               <button
                 onClick={() =>
-                 openUrl("https://github.com/studio-iris3/tauri-video-downloader")
+                  openUrl("https://github.com/studio-iris3/tauri-video-downloader")
                 }
-               style={{
-                border: "none",
-                background: "transparent",
-                color: "#60a5fa",
-                cursor: "pointer",
-                padding: 0,
-                textAlign: "left",
-                wordBreak: "break-all",
-                fontSize: 14,
-               }}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  color: "#60a5fa",
+                  cursor: "pointer",
+                  padding: 0,
+                  textAlign: "left",
+                  wordBreak: "break-all",
+                  fontSize: 14,
+                }}
               >
                 https://github.com/studio-iris3/tauri-video-downloader
               </button>
@@ -887,6 +919,37 @@ function App() {
             </div>
 
             <button onClick={() => setShowAbout(false)} style={buttonStyle("purple")}>
+              閉じる
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showReleaseNotes && (
+        <div style={modalBackdropStyle}>
+          <div style={modalStyle}>
+            <h2 style={{ marginTop: 0 }}>Release Notes</h2>
+
+            <div style={{ lineHeight: 1.8, color: "#cbd5e1" }}>
+              <div style={{ fontWeight: 900, fontSize: 16 }}>
+                v{version}
+              </div>
+
+              <ul style={{ paddingLeft: 20, marginTop: 10 }}>
+                <li>クリップボードからURL貼り付け機能を追加</li>
+                <li>About画面を追加</li>
+                <li>About内GitHubリンクをクリック可能化</li>
+                <li>URL重複防止を追加</li>
+                <li>履歴からURLを再追加できる機能を追加</li>
+                <li>作業領域を左カラム、操作ボタンを右カラムに整理</li>
+                <li>UIレイアウトを改善し、ジョブ一覧を見やすく調整</li>
+              </ul>
+            </div>
+
+            <button
+              onClick={() => setShowReleaseNotes(false)}
+              style={buttonStyle("purple")}
+            >
               閉じる
             </button>
           </div>
