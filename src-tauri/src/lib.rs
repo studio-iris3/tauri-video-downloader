@@ -160,7 +160,7 @@ fn get_tool_versions(app: AppHandle) -> Result<ToolVersions, String> {
         })?;
 
     Ok(ToolVersions {
-        app: "v1.2.1".to_string(),
+        app: "v1.2.3".to_string(),
         yt_dlp: yt_dlp_version,
         ffmpeg: ffmpeg_version,
     })

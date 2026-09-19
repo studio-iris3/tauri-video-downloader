@@ -91,6 +91,15 @@ YouTubeなどでログイン状態が必要な動画では、Cookie Browserを�
 - Mac notarization
 - Windows code signing
 
+## v1.2.3 更新内容
+
+- yt-dlp を最新版へ更新
+- YouTube の仕様変更に伴う HTTP 403 エラー対策
+- YouTube クライアント固定指定を見直し、yt-dlp 側の自動選択へ変更
+- macOS / Windows 両方の yt-dlp 同梱版を更新
+- Windows で一括設定のプルダウン文字が見えにくくなる問題を改善
+- 開発時も同梱 yt-dlp を使用するように変更
+
 ## v1.2.0 更新内容
 
 - アプリ軽量化
