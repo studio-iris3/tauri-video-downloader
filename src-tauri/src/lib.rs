@@ -192,8 +192,6 @@ fn get_video_info(
         .arg("--skip-download")
         .arg("--no-playlist")
         .arg("--force-ipv4")
-        .arg("--extractor-args")
-        .arg("youtube:player_client=default,ios")
         .arg(&url)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -276,8 +274,6 @@ fn download_video(
         .arg("--progress")
         .arg("--no-playlist")
         .arg("--force-ipv4")
-        .arg("--extractor-args")
-        .arg("youtube:player_client=default,ios")
         .arg("--ffmpeg-location")
         .arg(ffmpeg)
         .arg("-o")

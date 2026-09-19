@@ -149,8 +149,12 @@ const DownloadCard = memo(function DownloadCard({
               style={selectStyle}
             >
               {mp4Qualities.map((quality) => (
-                <option key={quality.value} value={quality.value}>
-                  {quality.label}
+                <option
+                  key={quality.value}
+                  value={quality.value}
+                  style={optionStyle}
+                >
+                   {quality.label}
                 </option>
               ))}
             </select>
@@ -167,9 +171,13 @@ const DownloadCard = memo(function DownloadCard({
               style={selectStyle}
             >
               {mp3Qualities.map((quality) => (
-                <option key={quality.value} value={quality.value}>
-                  {quality.label}
-                </option>
+              <option
+                key={quality.value}
+                value={quality.value}
+                style={optionStyle}
+              >
+              {quality.label}
+              </option>
               ))}
             </select>
           )}
@@ -637,8 +645,8 @@ function App() {
 
       <div style={controlPanelStyle}>
         <select value={bulkFormatType} onChange={(event) => setBulkFormatType(event.target.value as FormatType)} style={selectStyle}>
-          <option value="mp4">MP4</option>
-          <option value="mp3">MP3</option>
+        <option value="mp4" style={optionStyle}>MP4</option>
+        <option value="mp3" style={optionStyle}>MP3</option>
         </select>
 
         {bulkFormatType === "mp4" && (
@@ -663,9 +671,13 @@ function App() {
 
         <select value={cookieBrowser} onChange={(event) => setCookieBrowser(event.target.value)} style={selectStyle}>
           {cookieBrowsers.map((browser) => (
-            <option key={browser.value} value={browser.value}>
-              {browser.label}
-            </option>
+            <option
+              key={browser.value}
+              value={browser.value}
+              style={optionStyle}
+            >
+            {browser.label}
+          </option>
           ))}
         </select>
 
@@ -989,12 +1001,22 @@ const selectStyle: React.CSSProperties = {
   padding: "0 10px",
   borderRadius: 10,
   border: "1px solid rgba(148,163,184,0.3)",
-  background: "linear-gradient(180deg,#334155,#1e293b)",
+  backgroundColor: "#1e293b",
+  backgroundImage: "linear-gradient(180deg,#334155,#1e293b)",
   color: "#ffffff",
+  WebkitTextFillColor: "#ffffff",
+  colorScheme: "dark",
   fontWeight: 800,
   fontSize: 14,
   outline: "none",
 };
+
+const optionStyle: React.CSSProperties = {
+  color: "#111827",
+  backgroundColor: "#ffffff",
+  WebkitTextFillColor: "#111827",
+};
+
 
 const countBoxStyle: React.CSSProperties = {
   display: "flex",

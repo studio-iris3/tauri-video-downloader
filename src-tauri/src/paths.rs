@@ -44,13 +44,6 @@ pub fn find_bundled_binary(app: &AppHandle, names: &[&str]) -> Result<PathBuf, S
 }
 
 pub fn yt_dlp_path(app: &AppHandle) -> Result<PathBuf, String> {
-    if cfg!(debug_assertions) {
-        let local = PathBuf::from("/usr/local/bin/yt-dlp");
-        if local.exists() {
-            return Ok(local);
-        }
-    }
-
     yt_dlp_bundled_path(app)
 }
 
