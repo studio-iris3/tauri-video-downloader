@@ -1,6 +1,6 @@
 [package]
 name = "tauri-video-downloader"
-version = "1.2.3"
+version = "1.2.4"
 description = "Studio Iris Video Downloader"
 authors = ["Studio Iris"]
 edition = "2021"
@@ -20,3 +20,6 @@ dirs = "5"
 tauri-plugin-opener = "2.5.4"
 tauri-plugin-clipboard-manager = "2"
 
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+sha2 = "0.10"
+hex = "0.4"

@@ -37,6 +37,11 @@ type ToolVersions = {
   ffmpeg: string;
 };
 
+type YtDlpDiagnostics = {
+  path: string;
+  version: string;
+};
+
 type DownloadItem = {
   id: string;
   url: string;
@@ -235,6 +240,10 @@ function App() {
   const [showAbout, setShowAbout] = useState(false);
   const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   const [history, setHistory] = useState<DownloadHistory[]>([]);
+  const [ytDlpDiagnostics, setYtDlpDiagnostics] = useState<YtDlpDiagnostics | null>(null);
+  const [ytDlpDiagnosticError, setYtDlpDiagnosticError] = useState("");
+  const [isUpdatingYtDlp, setIsUpdatingYtDlp] = useState(false);
+  const [ytDlpUpdateResult, setYtDlpUpdateResult] = useState("");
 
   useEffect(() => {
     itemsRef.current = items;
@@ -337,6 +346,39 @@ function App() {
       setMessage(`バージョン情報を取得できませんでした: ${String(error)}`);
     }
   }
+
+  async function refreshYtDlpDiagnostics() {
+    try {
+      const info = await invoke<YtDlpDiagnostics>("get_yt_dlp_diagnostics");
+      setYtDlpDiagnostics(info);
+      setYtDlpDiagnosticError("");
+    } catch (error) {
+      setYtDlpDiagnostics(null);
+      setYtDlpDiagnosticError(String(error));
+    }
+  }
+
+  async function updateYtDlp() {
+    if (isUpdatingYtDlp || isDownloading) return;
+    setIsUpdatingYtDlp(true);
+    setYtDlpUpdateResult("yt-dlpを確認・更新しています。完了までお待ちください…");
+    try {
+      const result = await invoke<string>("update_yt_dlp");
+      setYtDlpUpdateResult(result);
+      await refreshYtDlpDiagnostics();
+    } catch (error) {
+      setYtDlpUpdateResult(`yt-dlpの更新に失敗しました: ${String(error)}`);
+      await refreshYtDlpDiagnostics();
+    } finally {
+      setIsUpdatingYtDlp(false);
+    }
+  }
+
+  useEffect(() => {
+    if (showAbout) {
+      void refreshYtDlpDiagnostics();
+    }
+  }, [showAbout]);
 
   async function chooseFolder() {
     const input = window.prompt("保存先フォルダのフルパスを入力してください", savePath);
@@ -881,10 +923,10 @@ function App() {
       )}
             {showAbout && (
         <div style={modalBackdropStyle}>
-          <div style={modalStyle}>
-            <h2 style={{ marginTop: 0 }}>About</h2>
+          <div style={{ ...modalStyle, maxHeight: "calc(100dvh - 32px)", width: "min(560px, calc(100vw - 32px))", boxSizing: "border-box", display: "flex", flexDirection: "column", overflow: "hidden", padding: 0 }}> 
+            <h2 style={{ margin: 0, padding: "18px 24px", flexShrink: 0, borderBottom: "1px solid rgba(148,163,184,0.25)" }}>About</h2>
 
-            <div style={{ lineHeight: 1.8, color: "#cbd5e1" }}>
+            <div style={{ lineHeight: 1.8, color: "#cbd5e1", overflowY: "auto", minHeight: 0, flex: 1, padding: "18px 24px", overscrollBehavior: "contain" }}> 
               <div>
                 <strong>Studio Iris Video Downloader</strong>
               </div>
@@ -894,6 +936,43 @@ function App() {
               <div>© 2026 Studio Iris. All Rights Reserved.</div>
               <div>Build Target: macOS / Windows</div>
               <div>Framework: Tauri v2 Desktop App</div>
+
+              <hr style={{ borderColor: "rgba(148,163,184,0.25)", margin: "16px 0" }} />
+
+              <div style={{ fontWeight: 800, marginBottom: 8 }}>yt-dlp エンジン</div>
+              <div>実行中バージョン: {ytDlpDiagnostics?.version ?? "確認中・未取得"}</div>
+              <div style={{ fontSize: 12, wordBreak: "break-all", color: "#94a3b8" }}>
+                実行パス: {ytDlpDiagnostics?.path ?? "未取得"}
+              </div>
+              {ytDlpDiagnosticError && (
+                <div style={{ color: "#fca5a5", fontSize: 12, whiteSpace: "pre-wrap" }}>
+                  診断エラー: {ytDlpDiagnosticError}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                <button
+                  onClick={() => void refreshYtDlpDiagnostics()}
+                  disabled={isUpdatingYtDlp}
+                  style={{ ...buttonStyle("gray"), opacity: isUpdatingYtDlp ? 0.55 : 1 }}
+                >
+                  状態を再確認
+                </button>
+                <button
+                  onClick={() => void updateYtDlp()}
+                  disabled={isUpdatingYtDlp || isDownloading}
+                  style={{ ...buttonStyle("blue"), opacity: isUpdatingYtDlp || isDownloading ? 0.55 : 1 }}
+                >
+                  {isUpdatingYtDlp ? "yt-dlp更新中…" : "yt-dlpを更新"}
+                </button>
+              </div>
+              {ytDlpUpdateResult && (
+                <div role="status" style={{ marginTop: 10, padding: 10, borderRadius: 8, background: "#0f172a", whiteSpace: "pre-wrap", fontSize: 12 }}>
+                  {ytDlpUpdateResult}
+                </div>
+              )}
+              <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 8 }}>
+                アプリ本体ではなくyt-dlpのみを更新します。ダウンロード実行中は更新できません。
+              </div>
 
               <hr style={{ borderColor: "rgba(148,163,184,0.25)", margin: "16px 0" }} />
 
@@ -930,9 +1009,11 @@ function App() {
               </ul>
             </div>
 
-            <button onClick={() => setShowAbout(false)} style={buttonStyle("purple")}>
-              閉じる
-            </button>
+            <div style={{ flexShrink: 0, display: "flex", justifyContent: "flex-end", padding: "12px 24px", borderTop: "1px solid rgba(148,163,184,0.25)", background: "#1e293b" }}>
+              <button onClick={() => setShowAbout(false)} style={{ ...buttonStyle("purple"), minHeight: 40, minWidth: 112, borderRadius: 10 }}>
+                閉じる
+              </button>
+            </div>
           </div>
         </div>
       )}

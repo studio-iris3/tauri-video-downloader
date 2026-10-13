@@ -1,4 +1,5 @@
 mod paths;
+mod updater;
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -13,6 +14,59 @@ use std::{
 use tauri::{AppHandle, Emitter, State};
 
 use paths::{ffmpeg_location, yt_dlp_path};
+fn checked_yt_dlp_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let path = yt_dlp_path(app)?;
+
+    let output = Command::new(&path)
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("yt-dlpを実行できません: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "yt-dlpのバージョン確認に失敗しました: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let version = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .to_string();
+
+    let valid_date = version.len() == 10
+        && version.as_bytes()[4] == b'.'
+        && version.as_bytes()[7] == b'.'
+        && version
+            .chars()
+            .enumerate()
+            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit());
+
+    if !valid_date {
+        return Err(format!(
+            "yt-dlpのバージョン形式を確認できません: {}",
+            version
+        ));
+    }
+
+    if version.as_str() < "2026.08.19" {
+        return Err(format!(
+            "古いyt-dlpの実行を停止しました。\n\
+             検出バージョン: {}\n\
+             実行パス: {}\n\
+             アプリの更新が必要です。",
+            version,
+            path.display()
+        ));
+    }
+
+    emit_log(app, format!(
+        "yt-dlp: {} / {}",
+        version,
+        path.display()
+    ));
+
+    Ok(path)
+}
 
 #[derive(Clone)]
 struct DownloadState {
@@ -138,7 +192,7 @@ fn get_default_download_dir() -> Result<String, String> {
 
 #[tauri::command]
 fn get_tool_versions(app: AppHandle) -> Result<ToolVersions, String> {
-    let yt_dlp = yt_dlp_path(&app)?;
+    let yt_dlp = checked_yt_dlp_path(&app)?;
     let ffmpeg = ffmpeg_location(&app)?;
 
     let yt_dlp_version = Command::new(&yt_dlp)
@@ -166,6 +220,45 @@ fn get_tool_versions(app: AppHandle) -> Result<ToolVersions, String> {
     })
 }
 
+#[derive(Serialize)]
+struct YtDlpDiagnostics {
+    path: String,
+    version: String,
+}
+
+#[tauri::command]
+fn get_yt_dlp_diagnostics(
+    app: AppHandle,
+) -> Result<YtDlpDiagnostics, String> {
+    let path = checked_yt_dlp_path(&app)?;
+
+    let output = Command::new(&path)
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("バージョン確認失敗: {}", e))?;
+
+    if !output.status.success() {
+        return Err("yt-dlpの実行確認に失敗しました".to_string());
+    }
+
+    Ok(YtDlpDiagnostics {
+        path: path.display().to_string(),
+        version: String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .to_string(),
+    })
+}
+
+#[tauri::command]
+async fn update_yt_dlp(app: AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let info = updater::check_latest_version()?;
+        updater::install_verified_update(&app, &info)
+    })
+    .await
+    .map_err(|e| format!("更新処理の実行に失敗しました: {}", e))?
+}
+
 #[tauri::command]
 fn cancel_download(state: State<DownloadState>, job_id: String) -> Result<(), String> {
     let mut cancelled = state
@@ -183,11 +276,12 @@ fn get_video_info(
     url: String,
     cookie_browser: Option<String>,
 ) -> Result<VideoInfo, String> {
-    let yt_dlp = yt_dlp_path(&app)?;
+    let yt_dlp = checked_yt_dlp_path(&app)?;
 
     let mut command = Command::new(yt_dlp);
 
     command
+        .arg("--ignore-config")
         .arg("--dump-json")
         .arg("--skip-download")
         .arg("--no-playlist")
@@ -251,7 +345,7 @@ fn download_video(
         cancelled.remove(&job_id);
     }
 
-    let yt_dlp = yt_dlp_path(&app)?;
+    let yt_dlp = checked_yt_dlp_path(&app)?;
     let ffmpeg = ffmpeg_location(&app)?;
 
     let output_dir = match save_path {
@@ -270,6 +364,7 @@ fn download_video(
     let mut command = Command::new(yt_dlp);
 
     command
+        .arg("--ignore-config")
         .arg("--newline")
         .arg("--progress")
         .arg("--no-playlist")
@@ -392,12 +487,14 @@ pub fn run() {
             cancelled_jobs: Arc::new(Mutex::new(HashSet::new())),
         })
         .invoke_handler(tauri::generate_handler![
-            get_default_download_dir,
-            get_video_info,
-            download_video,
-            cancel_download,
-            get_tool_versions
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+         get_default_download_dir,
+         get_video_info,
+         download_video,
+         cancel_download,
+         get_tool_versions,
+         get_yt_dlp_diagnostics,
+         update_yt_dlp,
+])
+.run(tauri::generate_context!())
+.expect("error while running tauri application");
 }
