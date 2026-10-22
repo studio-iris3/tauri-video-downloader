@@ -6,6 +6,7 @@ on:
     branches:
       - tauri-v2-current
       - cleanup-universal-bin
+      - feature/yt-dlp-updater-v1.2.4
     tags:
       - "v*"
 
