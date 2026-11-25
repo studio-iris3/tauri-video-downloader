@@ -1,0 +1,16 @@
+name: Studio Iris Promotion - Connection Test
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feature/auto-promotion'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Buffer connection without publishing
+        env:
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+        run: python3 auto-promotion/check.py
