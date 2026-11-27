@@ -1,0 +1,52 @@
+name: Studio Iris Daily Promotion
+on:
+  schedule:
+    - cron: '0 3 * * *'
+    - cron: '0 14 * * *'
+permissions:
+  contents: read
+concurrency:
+  group: studio-iris-daily-promotion
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Publish daily promotion
+        env:
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+          SLOT: ${{ github.event.schedule }}
+        run: |
+          python3 - <<'PY'
+          import os, json, urllib.request, datetime
+          def query(q):
+              req = urllib.request.Request("https://api.buffer.com", data=json.dumps({"query":q}).encode(), headers={"Authorization":"Bearer "+os.environ["BUFFER_API_KEY"],"Content-Type":"application/json"})
+              with urllib.request.urlopen(req,timeout=30) as r:
+                  d=json.load(r)
+              if d.get("errors") or not d.get("data"):
+                  raise SystemExit("Buffer query failed")
+              return d["data"]
+          matches=[]
+          for org in query("query { account { organizations { id } } }")["account"]["organizations"]:
+              for c in query("query { channels(input: {organizationId: "+json.dumps(org["id"])+"}) { id name service } }")["channels"]:
+                  if c["name"].strip().lower().lstrip("@")=="studioirissyo" and c["service"].lower() in ("twitter","x"):
+                      matches.append(c["id"])
+          if len(matches)!=1:
+              raise SystemExit("Unexpected channel")
+          ja=["映像・音響の現場で使うソフトウェアをお探しの方へ。","Stream Deckで動画や音声を操作したい方へ。","配信やイベントの素材再生をもっと便利に。","現場の作業に役立つアプリを紹介しています。","動画・音声のポン出しにStream Deck Cue Player。","イベントの再生操作を見直してみませんか。","Studio Irisのソフトウェアをご覧ください。"]
+          en=["Explore software designed for AV workflows.","Looking for Stream Deck video and audio cue playback?","Discover tools for live events and streaming.","Explore practical software from Studio Iris.","Meet Stream Deck Cue Player for media playback.","Looking for tools to support event production?","Discover the Studio Iris software shop."]
+          now=datetime.datetime.now(datetime.timezone.utc)
+          slot=os.environ["SLOT"]
+          expected=3 if slot=="0 3 * * *" else 14
+          if now.hour!=expected:
+              raise SystemExit("Delayed run; skipping to avoid wrong posting time")
+          messages=ja if expected==3 else en
+          post=messages[now.date().toordinal()%len(messages)]+"\nhttps://studioiris-27abm.stores.jp/"
+          q='mutation { createPost(input: {text: '+json.dumps(post,ensure_ascii=False)+', channelId: '+json.dumps(matches[0])+', schedulingType: automatic, mode: shareNow}) { ... on PostActionSuccess { post { id } } ... on MutationError { message } } }'
+          result=query(q)["createPost"]
+          if not result.get("post"):
+              raise SystemExit("Buffer rejected post")
+          print("Buffer accepted post:",result["post"]["id"])
+          PY
