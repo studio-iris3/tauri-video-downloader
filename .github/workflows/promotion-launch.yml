@@ -1,0 +1,36 @@
+name: Studio Iris Launch Announcement
+on:
+  push:
+    branches: [feature/auto-promotion]
+    paths: ['.github/workflows/promotion-launch.yml']
+permissions:
+  contents: read
+jobs:
+  publish:
+    if: github.run_number == 1 && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v5
+      - name: Publish launch announcement
+        env:
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+        run: |
+          cd auto-promotion
+          python3 - <<'PY'
+          from check import query
+          import json
+          ids=[]
+          for org in query("query { account { organizations { id } } }")["account"]["organizations"]:
+              for c in query("query { channels(input: {organizationId: "+json.dumps(org["id"])+"}) { id name service } }")["channels"]:
+                  if c["name"].strip().lower().lstrip("@")=="studioirissyo" and c["service"].lower() in ("twitter","x"):
+                      ids.append(c["id"])
+          if len(ids)!=1:
+              raise SystemExit("Unexpected channel")
+          post="Stream Deck Cue Player：動画・音声・静止画のポン出しに。配信やイベントの素材再生をサポートするStudio Irisのアプリです。\nhttps://studioiris-27abm.stores.jp/"
+          q='mutation { createPost(input: {text: '+json.dumps(post,ensure_ascii=False)+', channelId: '+json.dumps(ids[0])+', schedulingType: automatic, mode: shareNow}) { ... on PostActionSuccess { post { id } } ... on MutationError { message } } }'
+          result=query(q)["createPost"]
+          if not result.get("post"):
+              raise SystemExit("Buffer rejected post")
+          print("Buffer accepted post:",result["post"]["id"])
+          PY
