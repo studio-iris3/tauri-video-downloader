@@ -1,0 +1,26 @@
+name: Studio Iris Live Promotion Test
+on:
+  push:
+    branches: [feature/auto-promotion]
+    paths:
+      - '.github/workflows/promotion-live-test.yml'
+permissions:
+  contents: read
+concurrency:
+  group: studio-iris-live-test
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.run_attempt == 1 && github.run_number == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify connection
+        env:
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+        run: python3 auto-promotion/check.py
+      - name: Publish one real promotional post
+        env:
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+        run: python3 auto-promotion/publish_once.py
