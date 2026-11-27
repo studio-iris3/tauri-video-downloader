@@ -1,0 +1,21 @@
+name: Studio Iris Catalog Test
+on:
+  push:
+    branches:
+      - feature/auto-promotion
+    paths:
+      - 'auto-promotion/catalog.py'
+      - '.github/workflows/promotion-catalog-test.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Python syntax
+        run: python3 -m compileall -q auto-promotion
+      - name: Discover public catalog without posting
+        run: python3 auto-promotion/catalog.py
